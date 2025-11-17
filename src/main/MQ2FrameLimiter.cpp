@@ -20,7 +20,8 @@
 #include "imgui/ImGuiUtils.h"
 #include "MQ2DeveloperTools.h"
 
-#include <mq/utils/Args.h>
+#include "mq/api/RenderDoc.h"
+#include "mq/utils/Args.h"
 
 #include <cstdint>
 #include <chrono>
@@ -218,6 +219,11 @@ public:
 	{
 		static bool lastHide = false;
 
+		if (gDrawWindowFrameSkipCount >= 0)
+		{
+			--gDrawWindowFrameSkipCount;
+		}
+
 		if (pCursorAttachment)
 		{
 			if (gbHideCursorAttachment)
@@ -242,6 +248,12 @@ public:
 			lastHide = gbHideCursorAttachment;
 		}
 
+		if (gDrawWindowFrameSkipCount >= 0)
+		{
+			DrawWindows_Trampoline();
+			return;
+		}
+
 		if (!IsLimiterEnabled())
 		{
 			// this is a pass through if we have the frame limiter off
@@ -251,6 +263,11 @@ public:
 
 	static void CallDrawWindows()
 	{
+		if (gDrawWindowFrameSkipCount >= 0)
+		{
+			return;
+		}
+
 		if (pWndMgr && (pScreenMode == nullptr || *pScreenMode != 3))
 		{
 			pWndMgr.get_as<CXWndManagerHook>()->DrawWindows_Trampoline();
@@ -282,7 +299,9 @@ public:
 				*g_bRenderSceneCalled = TRUE;
 
 			if (IsTieUiToSimulation())
+			{
 				RenderBlind_Trampoline();
+			}
 		}
 	}
 
@@ -379,7 +398,17 @@ public:
 		// This will only be true if we the frame limiter is disabled, but there are side effects to do the simulation step later
 		if (ShouldDoRealRenderWorld())
 		{
+			DoRealRender_World();
+		}
+	}
+
+	void DoRealRender_World()
+	{
+		RenderDoc_ScopedEvent e(MQColor(170, 255, 255), L"RealRender_World");
+
+		{
 			MQScopedBenchmark bm(bmRealRenderWorld);
+
 			RealRender_World_Trampoline();
 		}
 	}
@@ -387,8 +416,8 @@ public:
 
 #if defined(_M_AMD64)
 // Defined in AssemblyFunctions.asm, need the forward declare
-void Throttler_Detour();
-void(*Throttler_Trampoline)();
+void Throttler_Detour(uint32_t);
+void(*Throttler_Trampoline)(uint32_t);
 #else
 DETOUR_TRAMPOLINE_DEF(void, Throttler_Trampoline, ());
 void Throttler_Detour()
@@ -562,10 +591,9 @@ public:
 		// always perform the real world update, the limiting here happens in the sleep later in this function
 		{
 			// Measure how long it takes to do a realrender
-			MQScopedBenchmark bm(bmRealRenderWorld);
 			RecordSimulationSample();
 
-			pDisplay.get_as<CDisplayHook>()->RealRender_World_Trampoline();
+			pDisplay.get_as<CDisplayHook>()->DoRealRender_World();
 
 			if (GetTieUiToSimulation())
 				CXWndManagerHook::CallDrawWindows();
@@ -945,8 +973,7 @@ public:
 	};
 
 	template <LimiterSetting Value>
-	static constexpr const char* SettingName() { static_assert(false, "Unsupported SettingName in FrameLimiter"); }
-
+	static constexpr const char* SettingName();
 	template <> static constexpr const char* SettingName<LimiterSetting::Enable>() { return "Enable"; }
 	template <> static constexpr const char* SettingName<LimiterSetting::ForegroundEnable>() { return "ForegroundEnable"; }
 	template <> static constexpr const char* SettingName<LimiterSetting::SaveByChar>() { return "SaveByChar"; }
@@ -961,8 +988,7 @@ public:
 
 private:
 	template <typename T, LimiterSetting Value>
-	static constexpr T GetDefault() { static_assert(false, "Unsupported bool FrameLimiter setting type"); }
-
+	static constexpr T GetDefault();
 	template <> static constexpr bool GetDefault<bool, LimiterSetting::Enable>() { return false; }
 	template <> static constexpr bool GetDefault<bool, LimiterSetting::ForegroundEnable>() { return false; }
 	template <> static constexpr bool GetDefault<bool, LimiterSetting::SaveByChar>() { return false; }
@@ -1065,8 +1091,7 @@ public:
 	}
 
 	template <LimiterSetting Setting>
-	bool Set(bool Value) { static_assert(false, "Attempting to set a bool setting that doesn't exist in FrameLimiter"); }
-
+	bool Set(bool Value);
 	template<> bool Set<LimiterSetting::Enable>(bool Value) { return InternalSet<bool, LimiterSetting::Enable>(m_enabled, Value); }
 	template<> bool Set<LimiterSetting::ForegroundEnable>(bool Value) { return InternalSet<bool, LimiterSetting::ForegroundEnable>(m_enabledInForeground, Value); }
 	template<> bool Set<LimiterSetting::SaveByChar>(bool Value) { return InternalSet<bool, LimiterSetting::SaveByChar>(m_saveByChar, Value); }
@@ -1080,7 +1105,7 @@ public:
 	bool Toggle() { return Set<Setting>(!GetSetting<bool, Setting>()); }
 
 	template <LimiterSetting Setting>
-	float Set(float Value) { static_assert(false, "Attempting to set a float setting that doesn't exist in FrameLimiter"); }
+	float Set(float Value);
 	template<> float Set<LimiterSetting::BackgroundFPS>(float Value) { return InternalSet<float, LimiterSetting::BackgroundFPS>(m_backgroundFPS, Value); }
 	template<> float Set<LimiterSetting::ForegroundFPS>(float Value) { return InternalSet<float, LimiterSetting::ForegroundFPS>(m_foregroundFPS, Value); }
 	template<> float Set<LimiterSetting::MinSimulationFPS>(float Value) { return InternalSet<float, LimiterSetting::MinSimulationFPS>(m_minSimulationFPS, Value); }

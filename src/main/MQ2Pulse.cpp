@@ -19,6 +19,7 @@
 #include "MQ2Main.h"
 #include "CrashHandler.h"
 #include "ImGuiManager.h"
+#include "Logging.h"
 
 #include "MQCommandAPI.h"
 #include "MQPluginHandler.h"
@@ -39,6 +40,7 @@ static bool s_isValid = true;
 static bool s_hasNotified = false;
 
 void UpdateMQ2SpawnSort();
+void PulseMQ2AutoInventory();
 
 //----------------------------------------------------------------------------
 
@@ -283,7 +285,7 @@ static void CheckGameValidity()
 {
 #if IS_LIVE_CLIENT
 	constexpr uint8_t salt[8] = {0x04, 0xc4, 0x57, 0xbf, 0x31, 0xd3, 0x62, 0x5a};
-	constexpr uint8_t hashes[24][8] = {
+	constexpr uint8_t hashes[25][8] = {
 		{0xc3, 0x33, 0x27, 0x8c, 0xc9, 0x9c, 0x4f, 0xe1},
 		{0x11, 0xa7, 0xac, 0x4a, 0x03, 0x79, 0x29, 0xb8},
 		{0x72, 0x63, 0x78, 0xde, 0x7c, 0xb6, 0xfe, 0xa2},
@@ -308,6 +310,7 @@ static void CheckGameValidity()
 		{0x3e, 0xb1, 0x87, 0x6c, 0x2a, 0xe5, 0x1f, 0x21},
 		{0xe6, 0x57, 0xf9, 0x13, 0x93, 0xac, 0xea, 0x4a},
 		{0x93, 0x53, 0x3d, 0x8d, 0x37, 0x48, 0xd0, 0x7c},
+		{0xab, 0xbc, 0x07, 0x9f, 0x3e, 0xe3, 0x66, 0xde},
 	};
 
 	const auto now = std::chrono::steady_clock::now();
@@ -357,7 +360,7 @@ static void CheckGameState()
 
 	if (lastGameState != gGameState)
 	{
-		SPDLOG_INFO("GameState Change: {} -> {}", lastGameState, gGameState);
+		LOG_INFO("GameState Change: {} -> {}", lastGameState, gGameState);
 		lastGameState = gGameState;
 	}
 
@@ -365,62 +368,62 @@ static void CheckGameState()
 	if (gGameState == GAMESTATE_INGAME)
 	{
 		if (!pLocalPC)
-			SPDLOG_ERROR("InGame with no pLocalPC");
+			LOG_ERROR("InGame with no pLocalPC");
 
 		if (pLocalPC)
 		{
 			if (pLocalPC->me != pLocalPlayer)
-				SPDLOG_ERROR("pLocalPC->me ({}) is different than pLocalPlayer ({})",
+				LOG_ERROR("pLocalPC->me ({}) is different than pLocalPlayer ({})",
 					(void*)pLocalPC->me, (void*)pLocalPlayer.get());
 		}
 
 		if (!pControlledPlayer)
-			SPDLOG_ERROR("InGame with no pControlledPlayer");
+			LOG_ERROR("InGame with no pControlledPlayer");
 		if (!pLocalPlayer)
-			SPDLOG_ERROR("InGame with no pLocalPlayer");
+			LOG_ERROR("InGame with no pLocalPlayer");
 
 		// Check UI state
 		if (!pPlayerWnd)
-			SPDLOG_ERROR("InGame with no pPlayerWnd");
+			LOG_ERROR("InGame with no pPlayerWnd");
 		if (!gbInZone)
-			SPDLOG_ERROR("InGame but not gbInZone");
+			LOG_ERROR("InGame but not gbInZone");
 	}
 	else if (gGameState == GAMESTATE_CHARSELECT)
 	{
 		if (!pLocalPC)
-			SPDLOG_ERROR("At CharSelect without pLocalPC");
+			LOG_ERROR("At CharSelect without pLocalPC");
 		else if (pLocalPC->me != nullptr)
 		{
 			// Me should be null
-			SPDLOG_ERROR("At CharSelect with pLocalPC->me ({} {})", (void*)pLocalPC->me, pLocalPC->me->Name);
+			LOG_ERROR("At CharSelect with pLocalPC->me ({} {})", (void*)pLocalPC->me, pLocalPC->me->Name);
 		}
 
 		if (!pLocalPlayer)
-			SPDLOG_ERROR("At CharSelect without pLocalPlayer");
+			LOG_ERROR("At CharSelect without pLocalPlayer");
 		if (!pControlledPlayer)
-			SPDLOG_ERROR("At CharSelect without pControlledPlayer");
+			LOG_ERROR("At CharSelect without pControlledPlayer");
 
 		// Check UI state
 		if (pPlayerWnd)
-			SPDLOG_ERROR("Not InGame with pPlayerWnd");
+			LOG_ERROR("Not InGame with pPlayerWnd");
 
 		if (!gbInZone)
-			SPDLOG_ERROR("At CharSelect without gbInZone");
+			LOG_ERROR("At CharSelect without gbInZone");
 	}
 
 	if (pLocalPC)
 	{
 		if (pLocalPC->ProfileManager.GetCurrentProfile() == nullptr)
-			SPDLOG_ERROR("pLocalPC exists but CurrentProfile does not");
+			LOG_ERROR("pLocalPC exists but CurrentProfile does not");
 	}
 	else if (pLocalPlayer)
 	{
-		SPDLOG_ERROR("pLocalPlayer exists but pLocalPC doesn't");
+		LOG_ERROR("pLocalPlayer exists but pLocalPC doesn't");
 	}
 
 	if (pLocalPlayer && !pControlledPlayer)
 	{
-		SPDLOG_ERROR("pLocalPlayer ({}) exists but no pControlledPlayer ({})",
+		LOG_ERROR("pLocalPlayer ({}) exists but no pControlledPlayer ({})",
 			(void*)pLocalPlayer.get(), (void*)pControlledPlayer.get());
 	}
 
@@ -431,16 +434,16 @@ static void CheckGameState()
 	static PlayerClient* OldMe = nullptr;
 
 	if (test_and_set(OldLocalPC, pLocalPC.get()))
-		SPDLOG_INFO("pLocalPC Changed: {}", (void*)pLocalPC.get());
+		LOG_INFO("pLocalPC Changed: {}", (void*)pLocalPC.get());
 
 	if (test_and_set(OldControlledPlayer, pControlledPlayer.get()))
-		SPDLOG_INFO("pControlledPlayer Changed: {} {}", (void*)pControlledPlayer.get(), pControlledPlayer ? pControlledPlayer->Name : "<null>");
+		LOG_INFO("pControlledPlayer Changed: {} {}", (void*)pControlledPlayer.get(), pControlledPlayer ? pControlledPlayer->Name : "<null>");
 	if (test_and_set(OldLocalPlayer, pLocalPlayer.get()))
-		SPDLOG_INFO("pLocalPlayer Changed: {} {}", (void*)pLocalPlayer.get(), pLocalPlayer ? pLocalPlayer->Name : "<null>");
+		LOG_INFO("pLocalPlayer Changed: {} {}", (void*)pLocalPlayer.get(), pLocalPlayer ? pLocalPlayer->Name : "<null>");
 
 	PlayerClient* pMe = pLocalPC ? pLocalPC->me : nullptr;
 	if (test_and_set(OldMe, pMe))
-		SPDLOG_INFO("pLocalPC->Me Changed: {} {}", (void*)pMe, pMe ? pMe->Name : "<null>");
+		LOG_INFO("pLocalPC->Me Changed: {} {}", (void*)pMe, pMe ? pMe->Name : "<null>");
 }
 
 static void Pulse()
@@ -621,29 +624,6 @@ static void Pulse()
 	}
 }
 
-// Trims trailing whitespace from strings in the string table.
-static void FixStringTable()
-{
-	for (int index = 0; index < pStringTable->Count; index++)
-	{
-		if (StringItem* pStr = pStringTable->StringItems[index])
-		{
-			if (char* p = pStr->String)
-			{
-				while (*p)
-					p++;
-				p--;
-				while (*p == ' ' && p != pStr->String)
-				{
-					*p = 0;
-					p--;
-				}
-			}
-		}
-	}
-}
-
-
 enum HeartbeatState
 {
 	HeartbeatNormal = 0,
@@ -693,12 +673,6 @@ static HeartbeatState Heartbeat()
 		TickDiff -= 100;
 		if (gDelay > 0) gDelay--;
 		DropTimers();
-	}
-
-	if (!gStringTableFixed && pStringTable)
-	{
-		FixStringTable();
-		gStringTableFixed = true;
 	}
 
 	DebugTry(int GameState = GetGameState());
@@ -795,31 +769,11 @@ bool DoGameEventsPulse(int (*pEventFunc)())
 
 	if (hbState == HeartbeatLoad && !IsPluginsInitialized())
 	{
-		OutputDebugString("I am loading in ProcessGameEvents");
-
-		DWORD oldscreenmode = std::exchange(ScreenMode, 3);
 		DoMainThreadInitialization();
-		ScreenMode = oldscreenmode;
-
-		g_hLoadComplete.SetEvent();
 	}
 	else if (hbState == HeartbeatUnload && g_Loaded)
 	{
-		// we are unloading stuff
-		OutputDebugString("I am unloading in ProcessGameEvents");
-
-		DWORD oldscreenmode = std::exchange(ScreenMode, 3);
-		WriteChatColor(UnloadedString, USERCOLOR_DEFAULT);
-		DebugSpewAlways("%s", UnloadedString);
-
-		// cant unload these here there are detours still in use that call functions from plugins...
-		//UnloadMQ2Plugins();
-
-		MQ2Shutdown();
-
-		g_Loaded = false;
-		ScreenMode = oldscreenmode;
-		SetEvent(hUnloadComplete);
+		DoMainThreadShutdown();
 	}
 
 	return processGameEventsResult;
@@ -864,7 +818,7 @@ void InitializeMQ2Pulse()
 
 	std::scoped_lock lock(s_pulseMutex);
 
-	AddDetour(reinterpret_cast<uintptr_t>(ProcessGameEvents), Detour_ProcessGameEvents, Trampoline_ProcessGameEvents, "ProcessGameEvents");
+	AddDetour(__ProcessGameEvents, Detour_ProcessGameEvents, Trampoline_ProcessGameEvents, "ProcessGameEvents");
 	EzDetour(CEverQuest__SetGameState, &CEverQuestHook::SetGameState_Detour, &CEverQuestHook::SetGameState_Trampoline);
 	EzDetour(CMerchantWnd__PurchasePageHandler__UpdateList, &CEverQuestHook::CMerchantWnd__PurchasePageHandler__UpdateList_Detour, &CEverQuestHook::CMerchantWnd__PurchasePageHandler__UpdateList_Trampoline);
 
@@ -878,7 +832,7 @@ void ShutdownMQ2Pulse()
 {
 	std::scoped_lock lock(s_pulseMutex);
 
-	RemoveDetour(reinterpret_cast<uintptr_t>(ProcessGameEvents));
+	RemoveDetour(__ProcessGameEvents);
 	RemoveDetour(CEverQuest__SetGameState);
 	RemoveDetour(CMerchantWnd__PurchasePageHandler__UpdateList);
 }

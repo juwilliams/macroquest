@@ -14,11 +14,12 @@
 
 #pragma once
 
-#ifndef MQ2MAIN_EXPORTS
+#if !defined(MQ2MAIN_IMPL) && !defined(__clang__)
 #error This header should only be included from the MQ2Main project
 #endif
 
 #include "mq/base/PluginHandle.h"
+#include "mq/base/String.h"
 #include "mq/api/CommandAPI.h"
 
 #include <mutex>
@@ -29,6 +30,7 @@ namespace mq {
 
 struct MQTimedCommand;
 struct MQCommand;
+struct MQPlugin;
 
 class MQCommandAPI
 {
@@ -63,6 +65,8 @@ public:
 	bool IsAlias(const std::string& alias) const;
 
 	bool InterpretCmd(const char* szFullLine, const MQCommandHandler& eqHandler);
+
+	void OnPluginUnloaded(MQPlugin* plugin, const MQPluginHandle& pluginHandle);
 
 	void Cmd_Help(const char* szLine) const;
 	void Cmd_Alias(const char* szLine);

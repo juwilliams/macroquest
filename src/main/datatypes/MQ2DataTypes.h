@@ -341,6 +341,8 @@ public:
 	void InitVariable(MQVarPtr& VarPtr) override;
 	bool FromData(MQVarPtr& VarPtr, const MQTypeVar& Source) override;
 	bool FromString(MQVarPtr& VarPtr, const char* Source) override;
+
+	MQLIB_OBJECT static const Achievement* GetAchievement(const MQVarPtr& VarPtr);
 };
 
 
@@ -476,6 +478,8 @@ public:
 
 	bool FromData(MQVarPtr& VarPtr, const MQTypeVar& Source) override;
 	bool FromString(MQVarPtr& VarPtr, const char* Source) override;
+
+	MQLIB_OBJECT static EQ_Spell* GetSpell(const MQVarPtr& VarPtr);
 
 	static bool dataSpell(const char* szIndex, MQTypeVar& Ret);
 };
@@ -754,7 +758,21 @@ public:
 };
 
 //============================================================================
-// MQ2InvSlotWindowType
+// MQHotButtonWindowType
+
+class MQHotButtonType : public MQ2Type
+{
+public:
+	MQHotButtonType();
+
+	bool GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQTypeVar& Dest) override;
+	bool ToString(MQVarPtr VarPtr, char* Destination) override;
+
+	bool FromData(MQVarPtr& VarPtr, const MQTypeVar& Source) override;
+};
+
+//============================================================================
+// MQInvSlotWindowType
 
 class MQInvSlotWindowType : public MQ2Type
 {
@@ -1236,8 +1254,14 @@ public:
 	static bool dataMount(const char* szIndex, MQTypeVar& Ret);
 	static bool dataIllusion(const char* szIndex, MQTypeVar& Ret);
 	static bool dataFamiliar(const char* szIndex, MQTypeVar& Ret);
-#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_TOL)
+#if HAS_TELEPORTATION_KEYRING
 	static bool dataTeleportationItem(const char* szIndex, MQTypeVar& Ret);
+#endif
+#if HAS_ACTIVATED_ITEM_KEYRING
+	static bool dataActivatedItem(const char* szIndex, MQTypeVar& Ret);
+#endif
+#if HAS_EQUIPMENT_KEYRING
+	static bool dataEquipmentItem(const char* szIndex, MQTypeVar& Ret);
 #endif
 };
 #endif // HAS_KEYRING_WINDOW
@@ -1504,6 +1528,7 @@ public:
 	MQSocialType();
 
 	bool GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQTypeVar& Dest) override;
+	bool ToString(MQVarPtr VarPtr, char* Destination) override;
 
 	static bool dataSocial(const char* szIndex, MQTypeVar& Ret);
 };

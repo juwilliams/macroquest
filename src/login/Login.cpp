@@ -16,26 +16,27 @@
 
 #include "Login.h"
 
-#include "common/Common.h"
+#include "mq/base/Config.h"
+#include "mq/base/String.h"
 #include "mq/base/WString.h"
 #include "mq/utils/Markov.h"
 
-#include <wincrypt.h>
-#pragma comment(lib, "Crypt32.lib")
+#include "argon2.h"
+#include "sqlite3.h"
+#include "fmt/format.h"
+#include "spdlog/spdlog.h"
+#include "wil/resource.h"
+#include "wil/registry.h"
 
-#include <wil/resource.h>
-#include <wil/registry.h>
 #include <filesystem>
 #include <regex>
 #include <random>
 
-#include <fmt/format.h>
-#include <spdlog/spdlog.h>
+#include <windows.h>
+#include <wincrypt.h>
 
-#include "sqlite3.h"
+#pragma comment(lib, "Crypt32.lib")
 #pragma comment(lib, "sqlite3")
-
-#include "argon2.h"
 #pragma comment(lib, "argon2")
 
 std::string s_dbPath;
@@ -644,10 +645,10 @@ bool login::db::CreateMasterPass(std::string_view pass)
 		[pass, &hash_params](sqlite3_stmt* stmt, sqlite3* db)
 		{
 			std::mt19937 generator{ std::random_device{}() };
-			std::uniform_int_distribution<unsigned char> distribution{ '!', '~' };
+			std::uniform_int_distribution<int> distribution{ '!', '~' };
 			std::string salt(hash_params.SaltLength, '\0');
 			for (auto& c : salt)
-				c = distribution(generator);
+				c = static_cast<char>(distribution(generator));
 
 			std::string encoded(argon2_encodedlen(
 				hash_params.TimeCost,
@@ -1577,7 +1578,7 @@ void login::db::DeleteServerType(std::string_view server_type)
 {
 	WithDb::Query<void>(SQLITE_OPEN_READWRITE,
 		R"(
-			DELETE FROM server_types WHERE server_type = LOWER(?))",
+			DELETE FROM server_types WHERE type = LOWER(?))",
 		[server_type](sqlite3_stmt* stmt, sqlite3* db)
 		{
 			BindText(stmt, 1, server_type);
@@ -1788,8 +1789,8 @@ std::optional<unsigned int> login::db::ReadFullProfile(ProfileRecord& profile)
 		R"(
 			SELECT id, eq_path, hotkey, level, account, password, sort_order, server_type, end_after_select, char_select_delay, custom_client_ini, will_load
 			FROM profiles
-			JOIN (SELECT id AS character_id, account FROM characters WHERE server = LOWER(?) AND character = LOWER(?)) USING (character_id)
-			JOIN (SELECT id AS account_id, account_id, server_type FROM accounts) USING (account_id)
+			JOIN (SELECT id AS character_id, account_id FROM characters WHERE server = LOWER(?) AND character = LOWER(?)) USING (character_id)
+			JOIN (SELECT id AS account_id, account, server_type FROM accounts) USING (account_id)
 			LEFT JOIN (SELECT id AS group_id FROM profile_groups WHERE name = LOWER(?)) USING (group_id)
 			LEFT JOIN (SELECT character_id, class, level FROM personas WHERE class = UPPER(?)) USING (character_id))",
 		[&profile](sqlite3_stmt* stmt, sqlite3* db) -> std::optional<unsigned int>

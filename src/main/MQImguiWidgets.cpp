@@ -38,22 +38,22 @@ static ImTextureID GetTextureID(const CUITextureInfo& textureInfo)
 
 		// if the texture is still missing then stop
 		if (static_cast<int>(textureInfo.TextureId) == -1)
-			return false;
+			return {};
 	}
 
 	// Try to extract texture info from the texture manager, if it exists already.
 	// This won't work at login until we map the texture loader to the login instance.
 
 	if (!pEQSuiteTextureLoader)
-		return false;
+		return {};
 
 	BMI* bitmap = pEQSuiteTextureLoader->GetTexture(textureInfo);
 	if (!bitmap)
-		return false;
+		return {};
 
 	CEQGBitmap* pEQGBitmap = bitmap->pBmp;
 	if (!pEQGBitmap)
-		return false;
+		return {};
 
 #if HAS_DIRECTX_11
 	ImTextureID TexID = pEQGBitmap;
@@ -531,9 +531,15 @@ void DrawSpellGem(ImDrawList* drawList,
 				position.y + static_cast<int>(pSpellGem->SpellIconOffsetY * scale),
 			};
 			CXSize iconSize = {
+#if IS_CLIENT_DATE(20180920u) // earliest known date with these fields
 				static_cast<int>(pSpellGem->SpellIconWidth * scale),
 				static_cast<int>(pSpellGem->SpellIconHeight * scale),
+#else
+				static_cast<int>(pTAIcon->CellWidth * scale),
+				static_cast<int>(pTAIcon->CellHeight * scale)
+#endif
 			};
+
 
 			if (pSpellGem->TintIndex == 0)
 			{

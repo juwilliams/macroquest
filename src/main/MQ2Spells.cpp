@@ -822,7 +822,7 @@ static bool IsRecursiveEffect(int spa)
 	return false;
 }
 
-static void PopulateTriggeredMap(EQ_Spell* pSpell)
+static void PopulateTriggeredMap(const EQ_Spell* pSpell)
 {
 	if (!pSpell || pSpell->CannotBeScribed)
 		return;
@@ -856,7 +856,7 @@ void PopulateSpellMap()
 	s_triggeredSpells.clear();
 	s_spellNameMap.clear();
 
-	for (auto pSpell : pSpellMgr->Spells)
+	for (EQ_Spell* pSpell : pSpellMgr->Spells)
 	{
 		if (!pSpell || !pSpell->Name[0])
 			continue;
@@ -1866,7 +1866,7 @@ static char* FormatSkills(const char* szEffectName, int64_t value, int64_t max, 
 template <unsigned int Size>
 static char* FormatSkills(const char* szEffectName, int64_t value, int skill, char(&szBuffer)[Size], bool percent = true, const char* preposition = "with")
 {
-	return FormatSkills(szEffectName, value, value, skill, szBuffer, usepercent, preposition);
+	return FormatSkills(szEffectName, value, value, skill, szBuffer, percent, preposition);
 }
 
 template <unsigned int Size>
@@ -1935,35 +1935,35 @@ static char* FormatTimer(const char* szEffectName, float value, char(&szBuffer)[
 	return szBuffer;
 }
 
-int GetSpellAttrib(EQ_Spell* pSpell, int index)
+int GetSpellAttrib(const EQ_Spell* pSpell, int index)
 {
 	if (index < 0) index = 0;
 
 	return pSpell ? pSpell->GetEffectAttrib(index) : 0;
 }
 
-int64_t GetSpellBase(EQ_Spell* pSpell, int index)
+int64_t GetSpellBase(const EQ_Spell* pSpell, int index)
 {
 	if (index < 0) index = 0;
 
 	return pSpell ? pSpell->GetEffectBase(index) : 0;
 }
 
-int64_t GetSpellBase2(EQ_Spell* pSpell, int index)
+int64_t GetSpellBase2(const EQ_Spell* pSpell, int index)
 {
 	if (index < 0) index = 0;
 
 	return pSpell ? pSpell->GetEffectBase2(index) : 0;
 }
 
-int64_t GetSpellMax(EQ_Spell* pSpell, int index)
+int64_t GetSpellMax(const EQ_Spell* pSpell, int index)
 {
 	if (index < 0) index = 0;
 
 	return pSpell ? pSpell->GetEffectMax(index) : 0;
 }
 
-int GetSpellCalc(EQ_Spell* pSpell, int index)
+int GetSpellCalc(const EQ_Spell* pSpell, int index)
 {
 	if (index < 0) index = 0;
 
@@ -3669,8 +3669,9 @@ bool HasSPA(EQ_Spell* pSpell, eEQSPA eSPA, bool bIncrease)
 
 	switch (eSPA)
 	{
-	case SPA_MOVEMENT_RATE: // Movement Rate
-		// below 0 means its a snare above its runspeed increase...
+	case SPA_HP: // HP regen or DoT, below 0 means its a DoT or lich-like spell
+	case SPA_MANA: // Mana regen or drain, below 0 means its draining mana
+	case SPA_MOVEMENT_RATE: // Movement Rate, below 0 means its a snare above its runspeed increase
 		return (!bIncrease && base < 0) || (bIncrease && base > 0);
 
 	case SPA_HASTE: // Melee Speed
@@ -3791,7 +3792,7 @@ DWORD GetSpellID(const CachedBuff& buff) { return buff.spellId; }
 const char* GetSpellName(EQ_Spell* spell)
 {
 	if (spell == nullptr || spell->Name == nullptr || spell->Name[0] == '\0')
-		return false;
+		return nullptr;
 
 	return spell->Name;
 }

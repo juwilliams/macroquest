@@ -19,19 +19,20 @@
 #include "imgui/fonts/IconsFontAwesome.h"
 #include "imgui/implot/implot.h"
 #include "imgui/misc/cpp/imgui_stdlib.h"
+#include "imgui/imgui_internal.h"
+#include "mq/imgui/Widgets.h"
 
-#include <mq/imgui/Widgets.h>
+#include "fmt/format.h"
+#include "fmt/ranges.h"
+#include "glm/glm.hpp"
+#include "spdlog/spdlog.h"
 
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
-
-#include <fmt/format.h>
-#include <spdlog/spdlog.h>
-#include <imgui_internal.h>
 #include <cfenv>
-#include <glm/glm.hpp>
+#include <cinttypes>
 
 using namespace std::chrono_literals;
 
@@ -54,6 +55,8 @@ static MQModule s_developerToolsModule = {
 DECLARE_MODULE_INITIALIZER(s_developerToolsModule);
 
 extern std::vector<std::unique_ptr<MQBenchmark>> gBenchmarks;
+
+static inline void  TreeAdvanceToLabelPos() { ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetTreeNodeToLabelSpacing()); }
 
 //----------------------------------------------------------------------------
 
@@ -1125,7 +1128,8 @@ class AltAbilityInspector : public ImGuiWindowBase
 {
 	CAltAbilityData* m_selectedAbility = nullptr;
 	bool m_foundSelected = false;
-	bool m_showVisable = true;
+	bool m_showVisible = true;
+	char m_searchText[256] = { 0 };
 
 public:
 	AltAbilityInspector() : ImGuiWindowBase("Alt Abilities Inspector")
@@ -1214,7 +1218,11 @@ public:
 
 		CAltAbilityData* nextSelection = nullptr;
 
-		ImGui::Checkbox("Show Visible Only", &m_showVisable);
+		ImGui::Checkbox("Show Visible Only", &m_showVisible);
+
+		ImGui::Text("Search: ");
+	
+		ImGui::InputText("##AASearchText", m_searchText, 256);
 
 		if (ImGui::BeginTable("##AltAbilityTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, size))
 		{
@@ -1232,9 +1240,16 @@ public:
 			while (ppAltAbility)
 			{
 				CAltAbilityData* altAbility = *ppAltAbility;
-				if (!m_showVisable || pAltAdvManager->CanSeeAbility(pLocalPC, altAbility))
+				if (!m_showVisible || pAltAdvManager->CanSeeAbility(pLocalPC, altAbility))
 				{
-					DrawAltAbilityTableRow(altAbility);
+					if (!m_searchText[0] ||
+							ci_find_substr(altAbility->GetNameString(), m_searchText) != -1 ||
+							ci_find_substr(altAbility->GetCategoryString(), m_searchText) != -1 ||
+							ci_find_substr(altAbility->GetDescriptionString(), m_searchText) != -1 ||
+							ci_find_substr(altAbility->GetExpansionString(), m_searchText) != -1)
+					{
+						DrawAltAbilityTableRow(altAbility);
+					}
 				}
 
 				if (altAbility == m_selectedAbility)
@@ -1943,8 +1958,124 @@ public:
 				ImGui::TreePop();
 			}
 #endif
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+
+			if (ImGui::TreeNode("Group"))
+			{
+				ImGui::TableNextRow();
+
+				if (pLocalPC->Group)
+				{
+					ImGui::TableNextColumn(); ImGui::Text("ID");
+					ImGui::TableNextColumn(); ImGui::Text("%d", pLocalPC->Group->GetID());
+
+					DrawGroupMember("Leader", pLocalPC->Group->GetGroupLeader());
+
+					for (uint32_t i = 0; i < pLocalPC->Group->GetMaxGroupSize(); ++i)
+					{
+						CGroupMember* groupMember = pLocalPC->Group->GetGroupMember(i);
+
+						char label[32] = {};
+						sprintf_s(label, "Member %d", i);
+						DrawGroupMember(label, groupMember);
+					}
+				}
+				else
+				{
+					ImGui::TableNextColumn(); ImGui::Text("No Group");
+				}
+
+				ImGui::TreePop();
+			}
 
 			ImGui::EndTable();
+		}
+	}
+
+	void DrawGroupMember(const char* text, CGroupMember* groupMember)
+	{
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+
+		if (groupMember)
+		{
+			bool expand = ImGui::TreeNode(text);
+			ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->GetName());
+
+			if (expand)
+			{
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Name");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->GetName());
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Type");
+				ImGui::TableNextColumn(); ImGui::Text("%d", (int)groupMember->Type);
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Owner Name");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->GetOwnerName());
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Level");
+				ImGui::TableNextColumn(); ImGui::Text("%d", groupMember->GetLevel());
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Is Offline");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->IsOffline() ? "Yes" : "No");
+
+#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_COTF)
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Unique Player ID");
+				ImGui::TableNextColumn(); ImGui::Text("%d", groupMember->UniquePlayerID);
+#endif
+
+#if IS_CLIENT_DATE(20250513u)
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Unknown 0x30");
+				ImGui::TableNextColumn(); ImGui::Text("%" PRIx64, groupMember->Unknown0x30);
+#endif
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Is Main Tank");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->IsMainTank() ? "Yes" : "No");
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Is Main Assist");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->IsMainAssist() ? "Yes" : "No");
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Is Puller");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->IsPuller() ? "Yes" : "No");
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Is Mark NPC");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->IsMarkNPC() ? "Yes" : "No");
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Is Master Looter");
+				ImGui::TableNextColumn(); ImGui::Text("%s", groupMember->IsMasterLooter() ? "Yes" : "No");
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Role Bits");
+				ImGui::TableNextColumn(); ImGui::Text("0x%08x", groupMember->CurrentRoleBits);
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Online Timestamp");
+				ImGui::TableNextColumn(); ImGui::Text("%" PRId64, groupMember->GetOnlineTimestamp());
+
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn(); ImGui::Text("Group Index");
+				ImGui::TableNextColumn(); ImGui::Text("%d", groupMember->GroupIndex);
+
+				ImGui::TreePop();
+			}
+		}
+		else
+		{
+			TreeAdvanceToLabelPos(); ImGui::Text("%s", text);
+			ImGui::TableNextColumn(); ImGui::TextColored(ImColor(1.0f, 1.0f, 1.0f, .5f), "None");
 		}
 	}
 };
@@ -2390,6 +2521,69 @@ static EngineInspector* s_engineInspector = nullptr;
 
 #pragma region EverQuest Data Inspector
 
+void DeveloperTools_DrawHotButtonData(const HotButtonData& data)
+{
+	// Item
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("Item");
+	if (ItemPtr pItem = data.Item)
+	{
+		ImGui::TableNextColumn();
+		if (imgui::ItemLinkText(pItem->GetName(), GetColorForChatColor(USERCOLOR_LINK)))
+			pItemDisplayManager->ShowItem(pItem);
+	}
+
+	// ItemGuid
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("ItemGuid");
+	ImGui::TableNextColumn(); ImGui::Text("%s", data.ItemGuid.guid);
+
+	// Label
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("Label");
+	ImGui::TableNextColumn(); ImGui::Text("%s", data.Label);
+
+	// Item Name
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("Item Name");
+	ImGui::TableNextColumn(); ImGui::Text("%s", data.ItemName);
+
+	// ItemID
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("ItemID");
+	ImGui::TableNextColumn(); ImGui::Text("%d", data.ItemId);
+
+	// IconType
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("IconType");
+	ImGui::TableNextColumn(); ImGui::Text("%d", data.IconType);
+
+	// IconSlot
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("IconSlot");
+	ImGui::TableNextColumn(); ImGui::Text("%d", data.IconSlot);
+
+	// IconId
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("IconID");
+	ImGui::TableNextColumn(); ImGui::Text("%d", data.IconId);
+
+	// Slot
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("Slot");
+	ImGui::TableNextColumn(); ImGui::Text("%d", data.Slot);
+
+	// Type
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("Type");
+	ImGui::TableNextColumn(); ImGui::Text("%d", (int)data.Type);
+
+	// Item Valid
+	ImGui::TableNextRow();
+	ImGui::TableNextColumn(); ImGui::Text("ItemValid");
+	ImGui::TableNextColumn(); ImGui::Text("%d", (int)data.ItemValid);
+}
+
 class EverQuestDataInspector : public ImGuiWindowBase
 {
 public:
@@ -2628,7 +2822,7 @@ public:
 
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn(); ImGui::Text("Expansion Flags");
-				ImGui::TableNextColumn(); ImGui::Text("%08X", eq.ExpansionsFlagBitmask);
+				ImGui::TableNextColumn(); ImGui::Text("%" PRIX64, (int64_t)eq.ExpansionsFlagBitmask);
 
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn(); ImGui::Text("Attack On Assist");
@@ -2764,6 +2958,139 @@ public:
 				ImGui::TreePop();
 			}
 
+			if (pConnection)
+			{
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				if (ImGui::TreeNode("Network"))
+				{
+					UdpLibrary::UdpConnectionStatistics stats;
+					pConnection->GetStats(&stats);
+
+					char temp[64];
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Total Bytes Sent");
+					FormatBytes(temp, stats.totalBytesSent);
+					ImGui::TableNextColumn(); ImGui::TextUnformatted(temp);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Total Bytes Received");
+					FormatBytes(temp, stats.totalBytesReceived);
+					ImGui::TableNextColumn(); ImGui::TextUnformatted(temp);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Total Packets Sent");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.totalPacketsSent);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Total Packets Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.totalPacketsReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("CRC Rejected Packets");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.crcRejectedPackets);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Order Rejected Packets");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.orderRejectedPackets);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Out Of Order Packets Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.outOfOrderPacketsReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Duplicate Packets Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.duplicatePacketsReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Out Of Range Packets Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.outOfRangePacketsReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Resent Packets Accelerated");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.resentPacketsAccelerated);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Resent Packets Timed Out");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.resentPacketsTimedOut);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Application Packets Sent");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.applicationPacketsSent);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Application Packets Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.applicationPacketsReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Iterations");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.iterations);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Corrupt Packet Errors");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.corruptPacketErrors);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Master Ping Age");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.masterPingAge);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Master Ping Time");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.masterPingTime);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Average Ping Time");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.averagePingTime);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Low Ping Time");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.highPingTime);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("High Ping Time");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.highPingTime);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Last Ping Time");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.lastPingTime);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Reliable Average Ping");
+					ImGui::TableNextColumn(); ImGui::Text("%d", stats.reliableAveragePing);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Sync Our Sent");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.syncOurSent);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Sync Our Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.syncOurReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Sync Their Sent");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.syncTheirSent);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Sync Their Received");
+					ImGui::TableNextColumn(); ImGui::Text("%lld", stats.syncTheirReceived);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Packet Loss: Sent");
+					ImGui::TableNextColumn(); ImGui::Text("%.2f%%", (1.0 - stats.percentSentSuccess) * 100);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Packet Loss: Received");
+					ImGui::TableNextColumn(); ImGui::Text("%.2f%%", (1.0 - stats.percentReceivedSuccess) * 100);
+
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn(); ImGui::Text("Connection Strength");
+					ImGui::TableNextColumn(); ImGui::Text("%.2f%%", pConnection->GetConnectionStrength() * 100);
+
+					ImGui::TreePop();
+				}
+			}
+
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
 			if (ImGui::TreeNode("Server"))
@@ -2786,7 +3113,7 @@ public:
 
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn(); ImGui::Text("Progression Expansions");
-				ImGui::TableNextColumn(); ImGui::Text("%08x", eq.ProgressionOpenExpansions);
+				ImGui::TableNextColumn(); ImGui::Text("%" PRIX64, (int64_t)eq.ProgressionOpenExpansions);
 
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn(); ImGui::Text("Heroic Flag");
@@ -2824,9 +3151,11 @@ public:
 				ImGui::TableNextColumn(); ImGui::Text("Tutorial Enabled");
 				ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::Checkbox("##Tutorial", &eq.bIsTutorialEnabled);
 
+#if IS_CLIENT_DATE(20250203)
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn(); ImGui::Text("Heroic Character Related");
-				ImGui::TableNextColumn(); ImGui::Text("%d", (int32_t)eq.bHeroicCharacterRelated);
+				ImGui::TableNextColumn(); ImGui::Text("%d, %d", (int32_t)eq.bHeroicCharacterRelated1, (int32_t)eq.bHeroicCharacterRelated2);
+#endif
 
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn(); ImGui::Text("Head Start Char");
@@ -2914,6 +3243,49 @@ public:
 								ImGui::TableNextRow();
 								ImGui::TableNextColumn(); ImGui::Text("Changed");
 								ImGui::TableNextColumn(); ImGui::Checkbox("##Changed", &eq.bSocialChanged[i][j]);
+
+								ImGui::TreePop();
+							}
+						}
+
+						ImGui::TreePop();
+					}
+				}
+
+				ImGui::TreePop();
+			}
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			if (ImGui::TreeNode("HotButtons"))
+			{
+				for (int window = 0; window < NUM_HOTBUTTON_WINDOWS; ++window)
+				{
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn();
+
+					if (ImGui::TreeNode((void*)&eq.hotButtons[window][0][0], "Window %d", window + 1))
+					{
+						for (int page = 0; page < NUM_HOTBUTTON_PAGES; ++page)
+						{
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+
+							if (ImGui::TreeNode((void*)&eq.hotButtons[window][page][0], "Page %d", page + 1))
+							{
+								for (int button = 0; button < HOTBUTTONS_PER_PAGE; ++button)
+								{
+									HotButtonData& data = eq.hotButtons[window][page][button];
+
+									ImGui::TableNextRow();
+									ImGui::TableNextColumn();
+									if (ImGui::TreeNode((void*)&data, "Button %d", button + 1))
+									{
+										DeveloperTools_DrawHotButtonData(data);
+
+										ImGui::TreePop();
+									}
+								}
 
 								ImGui::TreePop();
 							}
@@ -4348,9 +4720,7 @@ public:
 			}
 		}
 
-		ImPlot::SetNextAxisLimits(ImAxis_X1, static_cast<double>(m_time) - m_history, m_time, ImGuiCond_Always);
-		ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 20, ImGuiCond_Once);
-		ImPlot::SetNextAxisLimits(ImAxis_Y2, 0, 100, ImGuiCond_Always);
+
 
 		if (ImPlot::BeginPlot("##Benchmarks", ImVec2(-1, -1), 0))
 		{
@@ -4358,13 +4728,16 @@ public:
 			ImPlot::SetupAxis(ImAxis_Y1, "Milliseconds", ImPlotAxisFlags_LockMin);
 			ImPlot::SetupAxis(ImAxis_Y2, "Percent", ImPlotAxisFlags_LockMin);
 			ImPlot::SetupAxis(ImAxis_Y3, "Frames Per Second", ImPlotAxisFlags_LockMin | ImPlotAxisFlags_Opposite);
-
+			ImPlot::SetupAxisLimits(ImAxis_X1, static_cast<double>(m_time) - m_history, m_time, ImGuiCond_Always);
+			ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 40, ImGuiCond_Appearing);
+			ImPlot::SetupAxisLimits(ImAxis_Y2, 0, 100, ImGuiCond_Always);
+			ImPlot::SetupAxisLimits(ImAxis_Y3, 0, 60, ImGuiCond_Appearing);
 			ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
+
 
 			for (const auto& p : m_data)
 			{
 				auto& data = p.second;
-
 				ImPlot::PlotLine(data->Name.c_str(), &data->Data[0].x, &data->Data[0].y,
 					data->Data.size(), ImPlotLineFlags_None, data->Offset, sizeof(ImVec2));
 			}

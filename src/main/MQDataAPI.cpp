@@ -17,6 +17,12 @@
 
 #include "MQCommandAPI.h"
 #include "MQDataAPI.h"
+#include "Logging.h"
+
+#include "CrashHandler.h"
+#include "mq/base/ScopeExit.h"
+
+#include <algorithm>
 
 namespace mq {
 
@@ -25,6 +31,7 @@ std::mutex s_objectMapMutex;
 uint32_t bmParseMacroData;
 
 static void SetGameStateDataAPI(int);
+static void OnPulseDataAPI();
 static void UnloadPluginDataAPI(const char*);
 
 static MQModule s_DataAPIModule = {
@@ -32,7 +39,7 @@ static MQModule s_DataAPIModule = {
 	false,                          // CanUnload
 	nullptr,
 	nullptr,
-	nullptr,
+	OnPulseDataAPI,
 	SetGameStateDataAPI,
 	nullptr,
 	nullptr,
@@ -71,23 +78,26 @@ static void PruneObservedEQObjects()
 		std::end(s_objectMap));
 }
 
+static void OnPulseDataAPI()
+{
+	const auto now = std::chrono::steady_clock::now();
+	static std::chrono::steady_clock::time_point next_check = now + std::chrono::seconds(30);
+
+	if (now > next_check)
+	{
+		next_check = now + std::chrono::seconds(30);
+		PruneObservedEQObjects();
+	}
+}
+
 static void SetGameStateDataAPI(int)
 {
 	PruneObservedEQObjects();
-
-	std::scoped_lock lock(s_objectMapMutex);
-
-	for (const auto& weak : s_objectMap)
-	{
-		weak.lock()->Invalidate();
-	}
 }
 
 // don't need a dropper because it will remove itself once the shared_ptr destroys itself
 void AddObservedEQObject(const std::shared_ptr<MQTransient>& Object)
 {
-	PruneObservedEQObjects();
-
 	std::scoped_lock lock(s_objectMapMutex);
 
 	s_objectMap.emplace_back(Object);
@@ -96,14 +106,13 @@ void AddObservedEQObject(const std::shared_ptr<MQTransient>& Object)
 // but we do need an invalidation method, which takes a void pointer because all we need to care about is the address of the object being invalidated
 void InvalidateObservedEQObject(void* Object)
 {
-	PruneObservedEQObjects();
-
 	std::scoped_lock lock(s_objectMapMutex);
 
 	for (const auto& weak : s_objectMap)
 	{
-		if (*weak.lock() == Object)
-			weak.lock()->Invalidate();
+		if (auto ptr = weak.lock())
+			if (*ptr == Object)
+				ptr->Invalidate();
 	}
 }
 
@@ -197,6 +206,23 @@ MQ2Type* MQDataAPI::FindDataType(const char* Name) const
 	return iter->second.type;
 }
 
+std::vector<std::string> MQDataAPI::GetDataTypeNames() const
+{
+	std::scoped_lock lock(m_mutex);
+
+	std::vector<std::string> result;
+	result.reserve(m_dataTypeMap.size());
+
+	for (const auto& [name, rec] : m_dataTypeMap)
+	{
+		result.push_back(name);
+	}
+
+	std::sort(result.begin(), result.end());
+
+	return result;
+}
+
 bool MQDataAPI::AddTopLevelObject(const char* szName, MQTopLevelObjectFunction Function,
 	const MQPluginHandle& pluginHandle)
 {
@@ -238,7 +264,7 @@ bool MQDataAPI::RemoveTopLevelObject(const char* szName, const MQPluginHandle& p
 	auto& item = iter->second;
 	if (item.owner != pluginHandle)
 	{
-		//SPDLOG_WARN("Attempt made by {} to remove TLO {} owned by {}",
+		//LOG_WARN("Attempt made by {} to remove TLO {} owned by {}",
 		//	std::string_view(owner ? owner->name : "(Unknown)"), szName, item.tlo->Owner->name);
 		return false;
 	}
@@ -341,7 +367,7 @@ bool MQDataAPI::FindMacroDataMember(MQ2Type* Type, const std::string& strMember)
 }
 
 // -1 = no exists, 0 = fail, 1 = success
-MQDataAPI::EvaluateResult MQDataAPI::EvaluateMacroDataMember(MQ2Type* type, MQVarPtr& VarPtr,
+MQDataAPI::EvaluateResult MQDataAPI::EvaluateMacroDataMember(MQ2Type* type, MQVarPtr&& VarPtr,
 	MQTypeVar& Result, const std::string& Member, char* pIndex, bool checkFirst) const
 {
 	// search for extensions on this type
@@ -354,7 +380,7 @@ MQDataAPI::EvaluateResult MQDataAPI::EvaluateMacroDataMember(MQ2Type* type, MQVa
 			MQ2Type* ext = rec.extentionType;
 
 			// optimize for failure case, check if exists first
-			auto result = EvaluateMacroDataMember(ext, VarPtr, Result, Member, pIndex, true);
+			auto result = EvaluateMacroDataMember(ext, std::move(VarPtr), Result, Member, pIndex, true);
 			if (result != EvaluateResult::NotFound)
 				return result;
 		}
@@ -654,8 +680,14 @@ void MQDataAPI::RegisterTopLevelObjects()
 	AddTopLevelObject("Familiar", datatypes::MQ2KeyRingType::dataFamiliar);
 	AddTopLevelObject("Illusion", datatypes::MQ2KeyRingType::dataIllusion);
 	AddTopLevelObject("Mount", datatypes::MQ2KeyRingType::dataMount);
-#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_TOL)
+#if HAS_TELEPORTATION_KEYRING
 	AddTopLevelObject("TeleportationItem", datatypes::MQ2KeyRingType::dataTeleportationItem);
+#endif
+#if HAS_ACTIVATED_ITEM_KEYRING
+	AddTopLevelObject("ActivatedItem", datatypes::MQ2KeyRingType::dataActivatedItem);
+#endif
+#if HAS_EQUIPMENT_KEYRING
+	AddTopLevelObject("EquipmentItem", datatypes::MQ2KeyRingType::dataEquipmentItem);
 #endif
 #endif // HAS_KEYRING_WINDOW
 }
@@ -1426,6 +1458,8 @@ std::string ModifyMacroString(std::string_view strOriginal, bool bParseOnce, Mod
 	return strReturn;
 }
 
+static bool ParseMacroDataImpl(char* szOriginal, size_t BufferSize);
+
 /**
  * @fn ParseMacroData
  *
@@ -1453,6 +1487,15 @@ std::string ModifyMacroString(std::string_view strOriginal, bool bParseOnce, Mod
  *                                            left to parse
  */
 bool ParseMacroData(char* szOriginal, size_t BufferSize)
+{
+	// Update crash state with last known string in case something goes wrong
+	CrashHandler_SetLastMacroData(szOriginal);
+	SCOPE_EXIT(CrashHandler_SetLastMacroData(nullptr));
+
+	return ParseMacroDataImpl(szOriginal, BufferSize);
+}
+
+static bool ParseMacroDataImpl(char* szOriginal, size_t BufferSize)
 {
 	MQScopedBenchmark bm(bmParseMacroData);
 
@@ -1490,6 +1533,9 @@ bool ParseMacroData(char* szOriginal, size_t BufferSize)
 
 	bool Changed = false;
 	char szCurrent[MAX_STRING] = { 0 };
+	int addrlen = 0;
+	size_t endlen = 0;
+	size_t NewLength = 0;
 
 	do
 	{
@@ -1554,7 +1600,7 @@ bool ParseMacroData(char* szOriginal, size_t BufferSize)
 			goto pmdbottom;
 		}
 
-		if (ParseMacroData(szCurrent, sizeof(szCurrent)))
+		if (ParseMacroDataImpl(szCurrent, sizeof(szCurrent)))
 		{
 			size_t NewLength = strlen(szCurrent);
 			memmove(&pBrace[NewLength + 1], &pEnd[1], strlen(&pEnd[1]) + 1);
@@ -1573,12 +1619,12 @@ bool ParseMacroData(char* szOriginal, size_t BufferSize)
 			}
 		}
 
-		size_t NewLength = strlen(szCurrent);
-		size_t endlen = strlen(&pEnd[1]) + 1;
+		NewLength = strlen(szCurrent);
+		endlen = strlen(&pEnd[1]) + 1;
 
 		memmove(&pBrace[NewLength], &pEnd[1], endlen);
 
-		int addrlen = (int)(pBrace - szOriginal);
+		addrlen = (int)(pBrace - szOriginal);
 		if (NewLength > BufferSize - addrlen)
 		{
 			if (MQMacroBlockPtr currblock = GetCurrentMacroBlock())
@@ -1614,7 +1660,7 @@ bool ParseMacroData(char* szOriginal, size_t BufferSize)
 
 	if (Changed)
 	{
-		while (ParseMacroData(szOriginal, BufferSize)) {}
+		while (ParseMacroDataImpl(szOriginal, BufferSize)) {}
 	}
 
 	return Changed;
@@ -1848,6 +1894,11 @@ MQ2Type* FindMQ2DataType(const char* name)
 	return pDataAPI->FindDataType(name);
 }
 
+std::vector<std::string> GetDataTypeNames()
+{
+	return pDataAPI->GetDataTypeNames();
+}
+
 bool AddMQ2TypeExtension(const char* typeName, MQ2Type* extension)
 {
 	return pDataAPI->AddTypeExtension(typeName, extension);
@@ -1899,5 +1950,24 @@ void SGlobalBuffer::pop_buffer()
 	m_stack.pop();
 }
 
+//============================================================================
+
+static bool s_initializedForTesting = false;
+
+void Test_InitializeDataAPI()
+{
+	assert(pDataAPI == nullptr);
+
+	pDataAPI = new MQDataAPI();
+	s_initializedForTesting = true;
+}
+
+void Test_ShutdownDataAPI()
+{
+	assert(pDataAPI != nullptr);
+	assert(s_initializedForTesting);
+
+	delete pDataAPI;
+}
 
 } // namespace mq

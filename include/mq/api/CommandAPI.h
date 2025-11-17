@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "mq/base/Common.h"
 #include <functional>
 
 namespace eqlib
@@ -33,7 +34,7 @@ namespace mq {
  * @param pChar Pointer to the current player.
  * @param szLine Line of text passed as an argument to the command
  */
-using MQCommandHandler = std::function<void(PlayerClient* pChar, const char* szLine)>;
+using MQCommandHandler = std::function<void(eqlib::PlayerClient* pChar, const char* szLine)>;
 
 
 /**
@@ -73,7 +74,7 @@ bool IsCommand(std::string_view command);
  * @param delayed If true, this function will return immediate and the command will be.
  * executed on the next Pulse.
  */
-void DoCommand(const char* command, bool delayed);
+void DoCommand(const char* command, bool delayed = true);
 
 /**
  * Execute a chat command with printf style formatting. Behaves the same as `DoCommand`,
@@ -124,7 +125,7 @@ bool IsAlias(const std::string& alias);
  *
  * @deprecated
  */
-using fEQCommandOld = void(*)(PlayerClient* pChar, char* command);
+using fEQCommandOld = void(*)(eqlib::PlayerClient* pChar, char* command);
 
 /**
  * A handler function that is invoked with a slash command is executed.
@@ -132,8 +133,16 @@ using fEQCommandOld = void(*)(PlayerClient* pChar, char* command);
  * @param pChar Pointer to the current player.
  * @param command Line of text passed as an argument to the command
  */
-using fEQCommand = void(*)(PlayerClient* pChar, const char* command);
+using fEQCommand = void(*)(eqlib::PlayerClient* pChar, const char* command);
 
+
+/**
+ * Search the list of EQ commands and return a function pointer to the command if it exists
+ *
+ * @param command The EQ slash command to search for (e.g. "/xtarget")
+ * @return A pointer to the command function, or nullptr if not found.
+ */
+MQLIB_API fEQCommand FindEQCommand(std::string_view command);
 
 /**
  * Adds a new chat command. If the command conflicts with an existing EverQuest command, then

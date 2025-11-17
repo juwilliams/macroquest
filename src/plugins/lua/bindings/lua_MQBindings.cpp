@@ -219,10 +219,10 @@ static void lua_doevents(sol::variadic_args va, sol::this_state s)
 		if (LuaEventProcessor* events = thread_ptr->GetEventProcessor())
 		{
 			std::vector<std::string> args;
-			for (auto& a : va)
+			for (sol::stack_proxy a : va)
 			{
-				auto arg = a.as<std::optional<std::string>>();
-				if (arg) args.emplace_back(*arg);
+				if (const auto& arg = a.as<std::optional<std::string>>())
+					args.emplace_back(*arg);
 			}
 
 			events->PrepareEvents(args);
@@ -238,10 +238,10 @@ static void lua_flushevents(sol::variadic_args va, sol::this_state s)
 		if (LuaEventProcessor* events = thread_ptr->GetEventProcessor())
 		{
 			std::vector<std::string> args;
-			for (auto& a : va)
+			for (sol::stack_proxy a : va)
 			{
-				auto arg = a.as<std::optional<std::string>>();
-				if (arg) args.emplace_back(*arg);
+				if (const auto& arg = a.as<std::optional<std::string>>())
+					args.emplace_back(*arg);
 			}
 
 			events->RemoveEvents(args);
@@ -249,7 +249,8 @@ static void lua_flushevents(sol::variadic_args va, sol::this_state s)
 	}
 }
 
-static bool lua_addevent(std::string_view name, std::string_view expression, sol::function function, sol::this_state s)
+static bool lua_addevent(std::string_view name, std::string_view expression, sol::function function,
+	sol::optional<sol::table> options, sol::this_state s)
 {
 	if (function == sol::nil)
 	{
@@ -260,7 +261,7 @@ static bool lua_addevent(std::string_view name, std::string_view expression, sol
 	if (std::shared_ptr<LuaThread> thread_ptr = LuaThread::get_from(s))
 	{
 		if (LuaEventProcessor* events = thread_ptr->GetEventProcessor())
-			return events->AddEvent(name, expression, function);
+			return events->AddEvent(name, expression, function, options);
 	}
 
 	return false;

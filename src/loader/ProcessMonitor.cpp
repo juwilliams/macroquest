@@ -15,13 +15,17 @@
 #include "MacroQuest.h"
 #include "ProcessMonitor.h"
 
-#include <comutil.h>
-#include <fmt/os.h>
-#include <wrl.h>
-#include <wil/com.h>
-#include <wil/resource.h>
-#include <spdlog/spdlog.h>
+#include "mq/base/String.h"
+
+#include "fmt/os.h"
+#include "wil/com.h"
+#include "wil/resource.h"
+#include "spdlog/spdlog.h"
+
 #include <chrono>
+#include <memory>
+#include <comutil.h>
+#include <wrl.h>
 
 using namespace std::chrono_literals;
 
@@ -340,7 +344,7 @@ void ToolHelpProcessMonitor::ThreadProc()
 			{
 				do
 				{
-					if (ci_equals(proc.szExeFile, "eqgame.exe"))
+					if (mq::ci_equals(proc.szExeFile, "eqgame.exe"))
 					{
 						processList.push_back(proc.th32ProcessID);
 					}
@@ -379,6 +383,8 @@ void ToolHelpProcessMonitor::ThreadProc()
 				// 	"Switching to WMI process monitor.", waitList.size());
 				// switchToWMI = true;
 				// m_running = false;
+
+				Sleep(2500); // Well, we were going to sleep for 5 seconds as a timeout anyway.
 			}
 			else
 			{

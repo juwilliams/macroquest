@@ -14,12 +14,12 @@
 
 #pragma once
 
-#include "../eqlib/EQLib.h"
 #include "MQ2Internal.h"
 #include "mq/base/GlobalBuffer.h"
 
+#include "eqlib/EQLib.h"
+
 #include <memory>
-#include <unordered_map>
 
 struct CaseInsensitiveLess
 {
@@ -42,8 +42,6 @@ MQLIB_VAR const double DegToRad;
 MQLIB_VAR const double PI;
 
 MQLIB_API uintptr_t baseAddress DEPRECATE("baseAddress is deprecated; use EQGameBaseAddress instead");
-
-bool InitOffsets();
 
 /* BENCHMARK HANDLES */
 
@@ -84,7 +82,6 @@ MQLIB_API HANDLE ghInitializeSpellDbThread;
 MQLIB_VAR bool g_Loaded;
 MQLIB_VAR DWORD ThreadID;
 
-MQLIB_VAR bool gStringTableFixed;
 MQLIB_VAR bool gbWriteAllConfig;
 
 MQLIB_VAR bool gAnonymize DEPRECATE("Anonymize is now handled at display, see MQ2Anonymize wiki for more information.");
@@ -170,6 +167,16 @@ MQLIB_VAR bool gFilterDebug;
 MQLIB_VAR bool gFilterMoney;
 MQLIB_VAR bool gFilterFood;
 MQLIB_VAR bool gFilterMQ;
+
+enum eFilterMacro
+{
+	FILTERMACRO_ALL = 0,
+	FILTERMACRO_ENHANCED = 1,
+	FILTERMACRO_NONE = 2,
+	FILTERMACRO_MACROENDED = 3,
+
+	FILTERMACRO_MAX,
+};
 MQLIB_VAR eFilterMacro gFilterMacro;
 MQLIB_VAR bool gFilterEncumber;
 MQLIB_VAR bool gFilterCustom;
@@ -294,7 +301,7 @@ MQLIB_VAR fEQGetMelee get_melee_range;
 
 MQLIB_VAR fEQW_GetDisplayWindow EQW_GetDisplayWindow;
 
-MQLIB_VAR bool ExecuteCmd(unsigned int command, bool keydown = false, void* data = nullptr);
+MQLIB_VAR bool ExecuteCmd(unsigned int command, bool keydown = false, void* data = nullptr, const KeyCombo* combo = nullptr);
 MQLIB_VAR const char* szDmgBonusType[];
 MQLIB_VAR const char* szBodyType[];
 MQLIB_VAR const char* szAugRestrictions[];

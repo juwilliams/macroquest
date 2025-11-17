@@ -1,25 +1,305 @@
+## Update 11/14/2025
+
+- loader: Fix SendSetForegroundWindow - should help resolve some issues with focus swapping
+
+## Update 11/13/2025
+
+Updated for live hotfix.
+
+- Fix achievements not reading properly
+- Fix Item.CashLoot not returning the proper value
+- Fix FindItemWnd additional columns overlapping existing columns
+
+## Live Patch Update 11/12/2025
+
+- Includes all changes from previous test patches.
+
+Additional fixes:
+- Fix crash when inspecting cash loot bag.
+
+
+## Test Patch Update 11/6/2025
+
+- Added new EquipmentItem TLO that provides access to the new equipment keyring. Usage is
+  the same as other keyrings.
+- Locked Items are added to the client, but access through MQ is not available yet.
+- Added CashLoot member to Item type
+
+
+## Previous Updates
+
+November 1, 2025:
+- test: Update for test patch
+
+October 27, 2025:
+- Added network capability for actors
+  Add any peers to a new \[NetworkPeers\] section in your ini in the format \<ip\>=\<port\>
+  Setting port to 0 assumes that the remote peer uses the same port as the local peer (default to 7781)
+  Can change the NetworkPeerPort entry in the \[MacroQuest\] section of the ini to change the connected port
+  Everything else should be completely transparent and function like the current actor system
+
+October 15, 2025:
+- live: Update for live patch
+
+October 12, 2025:
+- test: Update for test patch
+
+September 24, 2025:
+- test: Update for test patch
+
+September 17, 2025:
+- live: Update for live patch
+
+September 14, 2025:
+- test: Update for test patch
+
+September 7, 2025:
+- live: Update for live patch
+
+August 27, 2025:
+- test: Update for test patch
+
+August 26, 2025:
+- live: Update for live patch
+
+August 21, 2025:
+- live: Update for live patch
+- test: Sync changes from live branch
+
+August 17, 2025:
+- test: Update for the last 3 test patches
+
+July 27, 2025:
+- test: Update for test patch
+
+July 20, 2025:
+- live: Update for live patch
+
+July 16, 2025:
+- live: Update for live patch
+
+July 14, 2025:
+- test: Update for test patch
+
+Jun 18, 2025:
+- live: Update for live patch
+- test: Fix Me.CombatState
+
+June 13, 2025:
+- test: Update for test patch
+
+May 21, 2025:
+- live: Update for live patch
+
+May 16, 2025:
+- test: Fix broken group members (#931)
+
+May 15, 2025:
+- test: update for test patch
+
+April 23, 2025:
+- test: update for test patch
+
+April 17, 2025:
+- live: Update for live hotfix patch
+
+April 17, 2025:
+- Fix broken AdvancedLootItem
+
+April 16, 2025:
+- live: Update for live patch
+
+April 12, 2025:
+- test: Update for test patch
+
+March 26, 2025:
+- test: Update for test patch
+
+March 18, 2025:
+- live: Update for live patch
+
+March 12, 2025:
+- test: Update for test patch
+- live: Update for live patch
+- Improve file permission checks to reduce the number of false positives
+
+Feb 15, 2025:
+- Fix EverQuest.WinTitle not returning the window title
+
+Feb 12, 2025:
+- live: Update for patch
+
+Feb 10, 2025:
+- test: Update for patch
+
+Jan 29, 2025:
+- test: Update for patch
+
+Jan 15, 2025:
+- live: Update for patch
+- lua: Add error handling to mq.delay, failures inside the callback should now propagate to the caller properly
+
+Jan 12, 2025:
+- test: Update for patch
+- Added ${Pet.ProcHold} and ${Pet.Resume}
+
+Jan 11, 2025:
+- ImGui has been updated to version 1.91.6
+- Fix date format string of output from /mqlog
+
+Dec 13, 2024:
+- test: Update for test patch
+
+Dec 5, 2024:
+- live: Update for patch
+
+Dec 3, 2024:
+- live: Update for TOB expansion patch
+- Fix /useitem not interacting with activated item keyring
+
+Dec 1, 2024:
+- test: Update for TOB expansion patch
+
+Nov 21, 2024:
+- Fix a couple crashes
+
+Nov 20, 2024:
+- live: Update for live patch
+- test: Update for test patch
+
+Note to plugin authors: the name labels of CGiveWnd and CTradeWnd changed from CLabel to CStmlWnd
+For compatibility between versions of the client, a new GetText() method is added to both to get
+the widget's text.
+
+Nov 17, 2024:
+- lua: Fix issues with mq.getFilteredSpawns returning nil or taking multiple frames.
+  This reverts back to the previous behavior before optimizations were implemented, but retains some of those optimizations.
+
+Nov 10, 2024:
+- lua: New Zep text editor and console widgets are now integrated. (See the updated console and texteditor
+  lua example in the lua/examples folder)
+
+Nov 8, 2024:
+- live: Update for live patch
+
+Oct 30, 2024:
+- test: Update for test patch
+
+Oct 24, 2024:
+- Fix new spawns getting mq captions applied when mqcaptions are disabled
+- Fix crash that could occur when using /lua stop in some circumstances (#906)
+- Fix crash when joining too many chat channels
+- Add parameter to mq/eval script to pass an expression to evaluate
+
+Oct 19, 2024:
+- Fixed some missing console/editor keybinds. Some new functionality includes ctrl+[ +, -, 0 ] to zoom the font.
+- lua: Starting a script will now also search require dirs if script is not found in main lua dir.
+
+Oct 16, 2024:
+- live: Update for live patch
+
+Oct 15, 2024:
+- test: Update for test patch
+
+Sep 30, 2024:
+- test: Update for test patch
+
+Sep 18, 2024:
+- live: Update for live patch
+
+Sep 12, 2024:
+- test: Update for test patch
+
+Sep 7, 2024:
+- emu: Fix bug that kept OnBeginZone events to fire. This fix will
+  resolve severael bugs, including nav not stopping when zoning.
+- emu: Added new Emu Extensions section in settings, with new option
+  to automatically set cpu affinity. This is on by default.
+
+Sep 5, 2024:
+- lua: events can now preserve links:
+    - mq.event('linkDetector', '#*#', linkDetector, { keepLinks = true })
+- lua: New set of APIs for manipulating links.
+    - See the [definitions](https://github.com/macroquest/mq-definitions/blob/master/mq/_itemlinks.lua) for a full listing.
+    - lua: New examples/linkdetector.lua script in the lua folder provides some examples.
+- lua: Add support for Macro token expansion in event patterns:
+    - mq.event('meDetector', '#*#|${Me.Name}|#*#', meDetector)
+
+Aug 21, 2024:
+- Update for live patch
+- Add SpellHold to Pet TLO (#893)
+
+Aug 19, 20924:
+- Update for test patch
+
+July 28, 2024:
+- Update for test patch
+
+July 22, 2024:
+- Update for live hotfix patch
+
+July 18, 2024:
+- Update for live hotfix patch
+
+July 17, 2024:
+- Update for live patch
+
+July 14, 2024:
+- test: Update for test patch
+
+July 7, 2024:
+- Add new HotButton window type: ${Window[HotButtonWnd2/HB_Button6].HotButton}
+- See docs at: https://docs.macroquest.org/reference/data-types/datatype-hotbuttonwindow/
+- Me.CombatState no longer depends on the player window being visible (#123).
+
+July 5, 2024:
+- emu: Fix RaidMember accessors (#685), (#861)
+
+July 4, 2024:
+- emu: Fix Spell.Inspect (#831).
+
+July 3, 2024:
+- Fix EverQuest.Ping, add EverQuest.ConnectionStrength - these are the value from the net meter.
+- Fix UI not working after persona swap (#797).
+
+July 1, 2024:
+- emu: Fix CTAFrameDraw, fixes several issues with window inspector (#871)
+- emu: Fix CBazaarSearchWnd, fixes several issues with /bzsrch (#872)
+
+June 24, 2024:
+- Update for live hotfix patch
+
+June 20, 2024:
+- Fix a bug in EverQuest so the window doesn't constantly resize/restore
+  itself whenever common system events happen.
+
+June 19, 2024:
+- Update for live patch
+
+June 16, 2024:
+- Update for test patch
+- Fix MacroQuest.exe now shutting down properly
+- FIx /removeaura not parsing macro arguments (#869).
+
+May 26, 2024:
+- Update for test patch
+
+May 23, 2024:
+- Update for live hotfix patch
+- Please refrain from using MQ on truebox servers.
+
 May 15, 2024:
 - Update for live patch
+
+May 10, 2024:
+- Update for test patch
 
 April 25, 2024:
 - Adjust timestamps in chat and logging to be in local time (#853, #852).
 - Add logging auto cleanup feature to launcher (#419).
 
-April 17, 2024:
-- Update for live patch
-
-April 11, 2024:
-- Update for test patch
-
-April 1, 2024:
-- Update for live patch
-
-March 30, 2024:
-- Update for live patch
-- Update for test patch
-
-March 23, 2024:
-- Update for test patch
+March 27, 2024:
+- Updated emu client to catch it up with the latest features
 
 March 13, 2024:
 - Update for live patch

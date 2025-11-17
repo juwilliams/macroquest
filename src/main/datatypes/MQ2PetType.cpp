@@ -101,6 +101,9 @@ enum class PetMembers
 	Name,
 	Focus,
 	FindBuff,
+	SpellHold,
+	Resume,
+	ProcHold,
 };
 
 MQ2PetType::MQ2PetType() : MQ2Type("pet")
@@ -118,6 +121,9 @@ MQ2PetType::MQ2PetType() : MQ2Type("pet")
 	ScopedTypeMember(PetMembers, Name);
 	ScopedTypeMember(PetMembers, Focus);
 	ScopedTypeMember(PetMembers, FindBuff);
+	ScopedTypeMember(PetMembers, SpellHold);
+	ScopedTypeMember(PetMembers, Resume);
+	ScopedTypeMember(PetMembers, ProcHold);
 }
 
 bool MQ2PetType::GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQTypeVar& Dest)
@@ -239,6 +245,29 @@ bool MQ2PetType::GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQT
 
 	case PetMembers::Hold:
 		Dest.Set(pPetInfoWnd->Hold);
+		Dest.Type = pBoolType;
+		return true;
+
+	case PetMembers::SpellHold:
+		Dest.Set(pPetInfoWnd->SpellHold);
+		Dest.Type = pBoolType;
+		return true;
+
+	case PetMembers::Resume:
+#if IS_CLIENT_DATE(20250107)
+		Dest.Set(pPetInfoWnd->Resume);
+#else
+		Dest.Set(false);
+#endif
+		Dest.Type = pBoolType;
+		return true;
+
+	case PetMembers::ProcHold:
+#if IS_CLIENT_DATE(20250107)
+		Dest.Set(pPetInfoWnd->ProcHold);
+#else
+		Dest.Set(false);
+#endif
 		Dest.Type = pBoolType;
 		return true;
 

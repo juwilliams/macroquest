@@ -16,9 +16,6 @@
 
 #define MQ_NO_EXPORTS
 
-#include "../common/Common.h"
-#include "../common/HotKeys.h"
-
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -48,8 +45,6 @@
 #include <wincrypt.h>
 #include <filesystem>
 
-using namespace mq;
-
 // Constants
 
 #define WinClassName "__MacroQuestTray"
@@ -62,7 +57,8 @@ constexpr int WM_USER_SHELLNOTIFY_CALLBACK  = (WM_USER + 1);
 constexpr int WM_USER_SYSTRAY               = (WM_USER + 2);
 constexpr int WM_USER_PROCESS_ADDED         = (WM_USER + 3);
 constexpr int WM_USER_PROCESS_REMOVED       = (WM_USER + 4);
-constexpr int WM_USER_CALLBACK              = (WM_USER + 5);
+constexpr int WM_USER_HOTKEY_ADD            = (WM_USER + 5);
+constexpr int WM_USER_HOTKEY_REMOVE         = (WM_USER + 6);
 
 
 //----------------------------------------------------------------------------
@@ -115,6 +111,15 @@ void RefreshInjections();
 void ShutdownInjector();
 std::string GetInjecteePath();
 
+enum class InjectResult {
+	Success = 0,
+	FailedRetry,
+	FailedPermanent,
+	FailedElevationRequired,
+};
+
+void ReportFailedInjection(InjectResult result, DWORD pid);
+
 
 // Utility
 std::string GetVersionStringLocal(const std::filesystem::path& filePath);
@@ -122,8 +127,6 @@ std::string GetVersionStringRemote(const std::string& versionURL);
 void ShowWarningBlocking(const std::string& Message);
 void ShowErrorBlocking(const std::string& Message);
 void ThreadedMessage(const std::string& Message, int MessageType);
-void SetFocusWindowPID(uint32_t pid, bool state);
-void SetForegroundWindowInternal(HWND hWnd);
 
 // RemoteOps
 HMODULE WINAPI GetRemoteModuleHandle(HANDLE hProcess, LPCSTR lpModuleName);
@@ -136,3 +139,4 @@ std::string GetLocalPlayer(DWORD pid);
 void InitializeAutoLogin();
 void ShutdownAutoLogin();
 void AutoLoginRemoveProcess(uint32_t process_id);
+

@@ -1,6 +1,6 @@
 /*
  * MacroQuest: The extension platform for EverQuest
- * Copyright (C) 2002-2023 MacroQuest Authors
+ * Copyright (C) 2002-present MacroQuest Authors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, version 2, as published by
@@ -25,7 +25,7 @@
 #include "spdlog/spdlog.h"
 
  // map of panels in the main GUI window
-static imgui::ImGuiTreePanelWindow* s_mainWindow = nullptr;
+static mq::imgui::ImGuiTreePanelWindow* s_mainWindow = nullptr;
 static std::map<const char*, void(*)()> s_pendingPanels;
 
 // map of viewport windows to render
@@ -360,7 +360,7 @@ bool RemoveContextGroup(const std::string& name)
 void MaybeShowContextMenu();
 void Run(const std::function<bool()>& mainLoop)
 {
-	s_mainWindow = new imgui::ImGuiTreePanelWindow("MacroQuest", { 640.f, 480.f });
+	s_mainWindow = new mq::imgui::ImGuiTreePanelWindow("MacroQuest", { 640.f, 480.f });
 	for (const auto& [name, callback] : s_pendingPanels)
 		s_mainWindow->AddPanel(name, callback);
 
@@ -456,9 +456,14 @@ void Run(const std::function<bool()>& mainLoop)
 			MaybeShowContextMenu();
 		};
 
+	static std::chrono::time_point<std::chrono::steady_clock> s_nextFrame = std::chrono::steady_clock::now();
 	while (mainLoop())
 	{
 		LauncherImGui::Backend::DrawFrame(draw_main);
+		std::this_thread::sleep_until(s_nextFrame);
+
+		// 33 1/3 FPS
+		s_nextFrame = s_nextFrame + std::chrono::milliseconds(30);
 	}
 
 	LauncherImGui::Backend::Cleanup();
@@ -505,15 +510,15 @@ void OpenContextMenu()
 	s_contextOpen = true;
 }
 
-void OpenMessageBox(ImGuiViewport* viewport, const std::string& message, const std::string& title)
+void OpenMessageBox(ImGuiViewport* viewport, const std::string& message, const std::string& title, const ImVec2& size)
 {
 	OpenWindow(
-		[viewport, message, title]
+		[viewport, message, title, size]
 		{
 			bool is_open = true;
 
 			const auto monitor = ImGui::GetViewportPlatformMonitor(viewport != nullptr ? viewport : ImGui::GetMainViewport());
-			ImGui::SetNextWindowSize({ 300.f, 200.f }, ImGuiCond_Appearing);
+			ImGui::SetNextWindowSize(size, ImGuiCond_Appearing);
 			ImGui::SetNextWindowPos(monitor->WorkPos + (monitor->WorkSize * 0.5f), ImGuiCond_Appearing, { 0.5f, 0.5f });
 
 			if (ImGui::Begin(title.c_str(), &is_open))

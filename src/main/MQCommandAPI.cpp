@@ -15,7 +15,9 @@
 #include "pch.h"
 #include "MQ2Main.h"
 
+#include "CrashHandler.h"
 #include "MQCommandAPI.h"
+#include "mq/base/ScopeExit.h"
 
 namespace mq {
 
@@ -44,7 +46,7 @@ struct MQCommand
 
 void PopMacroLoop();
 // Defined in MQ2MacroCommands.cpp
-void FailIf(SPAWNINFO* pChar, const char* szCommand, int pStartLine, bool All);
+void FailIf(PlayerClient* pChar, const char* szCommand, int pStartLine, bool All);
 
 MQCommandAPI* pCommandAPI = nullptr;
 
@@ -185,7 +187,7 @@ MQCommandAPI::MQCommandAPI()
 		{ "/hotbutton",         DoHotButton,                true,  true  },
 		{ "/hud",               HudCmd,                     true,  false },
 		{ "/identify",          Identify,                   true,  true  },
-		{ "/if",                MacroIfCmd,                      true,  false },
+		{ "/if",                MacroIfCmd,                 true,  false },
 		{ "/ini",               IniOutput,                  true,  false },
 		{ "/insertaug",         InsertAugCmd,               true,  true  },
 		{ "/invoke",            InvokeCmd,                  true,  false },
@@ -226,7 +228,7 @@ MQCommandAPI::MQCommandAPI()
 		{ "/ranged",            RangedCmd,                  true,  true  },
 		{ "/reloadui",          ReloadUICmd,                true,  true  },
 		{ "/removeaug",         RemoveAugCmd,               true,  true  },
-		{ "/removeaura",        RemoveAura,                 false, true  },
+		{ "/removeaura",        RemoveAura,                 true,  true  },
 		{ "/removebuff",        RemoveBuff,                 true,  true  },
 		{ "/removelev",         RemoveLevCmd,               true,  false },
 		{ "/removepetbuff",     RemovePetBuff,              true,  true  },
@@ -253,7 +255,7 @@ MQCommandAPI::MQCommandAPI()
 		{ "/vardata",           VarDataCmd,                 true,  false },
 		{ "/varset",            VarSetCmd,                  true,  false },
 		{ "/where",             Where,                      true,  true  },
-		{ "/while",             MacroWhileCmd,                   true,  false },
+		{ "/while",             MacroWhileCmd,              true,  false },
 		{ "/who",               SuperWho,                   true,  true  },
 		{ "/whofilter",         SWhoFilter,                 true,  true  },
 		{ "/whotarget",         SuperWhoTarget,             true,  true  },
@@ -293,6 +295,36 @@ MQCommandAPI::~MQCommandAPI()
 	}
 
 	m_aliases.clear();
+}
+
+void MQCommandAPI::OnPluginUnloaded(MQPlugin* plugin, const MQPluginHandle& pluginHandle)
+{
+	// Remove any commands that were created by this plugin.
+	MQCommand* pCommand = m_pCommands;
+
+	while (pCommand)
+	{
+		if (pCommand->pluginHandle == pluginHandle)
+		{
+			DebugSpew("Removing command left behind by %s: %s", plugin->name.c_str(), pCommand->command.c_str());
+
+			if (pCommand->pNext)
+				pCommand->pNext->pLast = pCommand->pLast;
+			if (pCommand->pLast)
+				pCommand->pLast->pNext = pCommand->pNext;
+			else
+				m_pCommands = pCommand->pNext;
+
+			MQCommand* thisCmd = pCommand;
+			pCommand = pCommand->pNext;
+
+			delete thisCmd;
+		}
+		else
+		{
+			pCommand = pCommand->pNext;
+		}
+	}
 }
 
 bool MQCommandAPI::InterpretCmd(const char* szFullLine, const MQCommandHandler& eqHandler)
@@ -457,6 +489,10 @@ void MQCommandAPI::DoCommand(const char* szLine, bool delayed,
 	}
 
 	WeDidStuff();
+
+	// Update crash state with last known command in case something goes wrong
+	CrashHandler_SetLastCommand(szLine);
+	SCOPE_EXIT(CrashHandler_SetLastCommand(nullptr));
 
 	char szTheCmd[MAX_STRING] = { 0 };
 	strcpy_s(szTheCmd, szLine);
@@ -1065,8 +1101,22 @@ void DoCommandf(const char* szFormat, ...)
 
 	vsprintf_s(szOutput, len, szFormat, vaList);
 
-	pCommandAPI->DoCommand(szFormat, false);
+	pCommandAPI->DoCommand(szOutput, false);
 }
 
+fEQCommand FindEQCommand(std::string_view command)
+{
+	PCMDLIST pCmdListOrig = EQADDR_CMDLIST;
+
+	for (int i = 0; pCmdListOrig[i].fAddress != nullptr; ++i)
+	{
+		if (ci_equals(pCmdListOrig[i].szName, command))
+		{
+			return pCmdListOrig[i].fAddress;
+		}
+	}
+
+	return nullptr;
+}
 
 } // namespace mq

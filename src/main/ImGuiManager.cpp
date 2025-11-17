@@ -16,24 +16,20 @@
 #include "ImGuiManager.h"
 
 #include "GraphicsEngine.h"
-#include "imgui/ImGuiUtils.h"
+#include "Logging.h"
 #include "MQ2ImGuiTools.h"
 #include "MQPluginHandler.h"
+#include "imgui/ImGuiUtils.h"
 
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
-#include "imgui/implot/implot.h"
-
- // I was trying to avoid including main, but we just got too many globals
-#include "MQ2Main.h"
-
-// move to mq/utils? or do we need a new static lib?
-#include "common/HotKeys.h"
-#include <mq/base/WString.h>
-#include <mq/utils/Benchmarks.h>
-
-#include "imgui/implot/implot_internal.h"
+#include "mq/base/WString.h"
 #include "mq/imgui/Widgets.h"
+#include "mq/utils/Benchmarks.h"
+#include "mq/utils/HotKeys.h"
+
+#include "imgui/imgui.h"
+#include "imgui/imgui_internal.h"
+#include "imgui/implot/implot.h"
+#include "imgui/implot/implot_internal.h"
 
 namespace ImGui
 {
@@ -351,6 +347,7 @@ uint32_t bmPluginsUpdateImGui = 0;
 bool gbRenderImGui = true;
 
 bool gbHideCursorAttachment = false;
+int gDrawWindowFrameSkipCount = -1;
 
 enum class DebugTab {
 	MouseInput = 0,
@@ -364,6 +361,8 @@ static DebugTab s_selectedDebugTab = DebugTab::None;
 static DebugTab s_selectDebugTab = DebugTab::None;
 static bool s_overlayDebug = false;
 static bool s_enableCursorAttachment = true;
+static bool s_shiftToDock = false;
+static bool s_keyboardNavImGui = false;
 static bool s_imguiIgnoreClampWindow = false;
 static ImGuiWindow* s_cursorLastHoveredWindow = nullptr;  // only used for comparison. might be invalid.
 static std::string s_cursorLastHoveredWindowName;
@@ -388,6 +387,7 @@ extern bool gbAutoDockspacePreserveRatio;
 
 // We forward declare this so that we don't need windows.h types in the header
 LRESULT  ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT  ImGui_ImplWin32_WndProcHandlerEx(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam, ImGuiIO& io);
 
 void SetOverlayEnabled(bool visible)
 {
@@ -1030,7 +1030,7 @@ void ImGuiManager_DrawCursorAttachment()
 	ImGui::End();
 }
 
-bool ImGuiManager_HandleWndProc(HWND hWnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)
+static bool HandleWndProcEvent(HWND hWnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)
 {
 	if (msg == WM_KEYDOWN
 		&& gbToggleConsoleHotkeyReady)
@@ -1048,7 +1048,26 @@ bool ImGuiManager_HandleWndProc(HWND hWnd, uint32_t msg, uintptr_t wParam, intpt
 		}
 	}
 
+	return false;
+}
+
+bool ImGuiManager_HandleWndProc(HWND hWnd, uint32_t msg, uintptr_t wParam, intptr_t lParam)
+{
+	if (HandleWndProcEvent(hWnd, msg, wParam, lParam))
+		return true;
+
 	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+		return true;
+
+	return false;
+}
+
+bool ImGuiManager_HandleWndProcEx(HWND hWnd, uint32_t msg, uintptr_t wParam, intptr_t lParam, ImGuiIO& io)
+{
+	if (HandleWndProcEvent(hWnd, msg, wParam, lParam))
+		return true;
+
+	if (ImGui_ImplWin32_WndProcHandlerEx(hWnd, msg, wParam, lParam, io))
 		return true;
 
 	return false;
@@ -1149,6 +1168,16 @@ void ImGuiManager_CreateContext()
 	mq::imgui::ConfigureStyle();
 
 	io.IgnoreClampWindow = s_imguiIgnoreClampWindow;
+	io.ConfigDockingWithShift = s_shiftToDock;
+
+	if (s_keyboardNavImGui)
+	{
+		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	}
+	else
+	{
+		io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+	}
 }
 
 void ImGuiManager_DestroyContext()
@@ -1205,6 +1234,33 @@ void ImGuiManager_OverlaySettings()
 	ImGui::SameLine();
 	mq::imgui::HelpMarker("When enabled, MacroQuest will take over drawing the EQ Cursor when\n"
 		"it is near to or hovering over an ImGui window.");
+
+	if (ImGui::Checkbox("Require Shift to Dock", &s_shiftToDock))
+	{
+		WritePrivateProfileBool("Overlay", "DockingWithShift", s_shiftToDock, mq::internal_paths::MQini);
+
+		auto& io = ImGui::GetIO();
+		io.ConfigDockingWithShift = s_shiftToDock;
+	}
+	ImGui::SameLine();
+	mq::imgui::HelpMarker("When enabled, HOLD Shift to Dock a Window");
+
+	if (ImGui::Checkbox("Navigate with Keyboard", &s_keyboardNavImGui))
+	{
+		auto& io = ImGui::GetIO();
+		if (s_keyboardNavImGui)
+		{
+			io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+		}
+		else
+		{
+			io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+		}
+
+		WritePrivateProfileBool("Overlay", "EnableKeyboardNav", s_keyboardNavImGui, mq::internal_paths::MQini);
+	}
+	ImGui::SameLine();
+	mq::imgui::HelpMarker("When enabled, Tab and Arrow Keys will navigate active ImGui window.");
 
 	if (ImGui::Checkbox("Ignore Window Clamping", &s_imguiIgnoreClampWindow))
 	{
@@ -1264,7 +1320,7 @@ void MQOverlayCommand(SPAWNINFO* pSpawn, char* szLine)
 		}
 		else
 		{
-			WriteChatf("Overlay is already running");
+			WriteChatf("Overlay is not suspended; Can not resume.");
 		}
 	}
 	else if (ci_equals(szArg, "stop"))
@@ -1370,16 +1426,21 @@ void ImGuiManager_Initialize()
 
 	gbEnableImGuiViewports = GetPrivateProfileBool("Overlay", "EnableViewports", false, mq::internal_paths::MQini);
 	gbAutoDockspaceViewport = GetPrivateProfileBool("Overlay", "ResizeEQViewport", false, mq::internal_paths::MQini);
-	s_imguiIgnoreClampWindow = GetPrivateProfileBool("Overlay", "ImGuiIgnoreClampWindow", false, mq::internal_paths::MQini);
 	gbAutoDockspacePreserveRatio = GetPrivateProfileBool("Overlay", "ResizeEQViewportPreserveRatio", false, mq::internal_paths::MQini);
+	s_imguiIgnoreClampWindow = GetPrivateProfileBool("Overlay", "ImGuiIgnoreClampWindow", false, mq::internal_paths::MQini);
 	s_enableCursorAttachment = GetPrivateProfileBool("Overlay", "CursorAttachment", s_enableCursorAttachment, mq::internal_paths::MQini);
+	s_shiftToDock = GetPrivateProfileBool("Overlay", "DockingWithShift", false, mq::internal_paths::MQini);
+	s_keyboardNavImGui = GetPrivateProfileBool("Overlay", "EnableKeyboardNav", false, mq::internal_paths::MQini);
 
 	if (gbWriteAllConfig)
 	{
 		WritePrivateProfileBool("Overlay", "EnableViewports", gbEnableImGuiViewports, mq::internal_paths::MQini);
 		WritePrivateProfileBool("Overlay", "ResizeEQViewport", gbAutoDockspaceViewport, mq::internal_paths::MQini);
 		WritePrivateProfileBool("Overlay", "ResizeEQViewportPreserveRatio", gbAutoDockspacePreserveRatio, mq::internal_paths::MQini);
+		WritePrivateProfileBool("Overlay", "ImGuiIgnoreClampWindow", s_imguiIgnoreClampWindow, mq::internal_paths::MQini);
 		WritePrivateProfileBool("Overlay", "CursorAttachment", s_enableCursorAttachment, mq::internal_paths::MQini);
+		WritePrivateProfileBool("Overlay", "DockingWithShift", s_shiftToDock, mq::internal_paths::MQini);
+		WritePrivateProfileBool("Overlay", "EnableKeyboardNav", s_keyboardNavImGui, mq::internal_paths::MQini);
 	}
 
 	// TODO: application-wide keybinds could use an encapsulated interface. For now I'm just dumping his here since we need it to
@@ -1392,12 +1453,12 @@ void ImGuiManager_Initialize()
 		if (mq::ConvertStringToModifiersAndVirtualKey(gToggleConsoleHotkey.keybind,
 			gToggleConsoleHotkey.modifiers, gToggleConsoleHotkey.virtualKey))
 		{
-			SPDLOG_INFO("Toggle console keybind: {0}", gToggleConsoleHotkey.keybind);
+			LOG_INFO("Toggle console keybind: {0}", gToggleConsoleHotkey.keybind);
 			gbToggleConsoleHotkeyReady = true;
 		}
 		else if (strlen(gToggleConsoleHotkey.keybind) > 0)
 		{
-			SPDLOG_WARN("Unable to parse toggle console keybind: {0}", gToggleConsoleHotkey.keybind);
+			LOG_WARN("Unable to parse toggle console keybind: {0}", gToggleConsoleHotkey.keybind);
 			strcpy_s(gToggleConsoleHotkey.keybind, "");
 
 			gbToggleConsoleHotkeyReady = false;

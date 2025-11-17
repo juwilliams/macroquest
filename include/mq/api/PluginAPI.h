@@ -40,8 +40,8 @@ using fMQReloadUI            = void(*)();
 using fMQCleanUI             = void(*)();
 using fMQDrawHUD             = void(*)();
 using fMQSetGameState        = void(*)(int GameState);
-using fMQSpawn               = void(*)(PlayerClient*);
-using fMQGroundItem          = void(*)(EQGroundItem*);
+using fMQSpawn               = void(*)(eqlib::PlayerClient*);
+using fMQGroundItem          = void(*)(eqlib::EQGroundItem*);
 using fMQBeginZone           = void(*)();
 using fMQEndZone             = void(*)();
 using fMQUpdateImGui         = void(*)();
@@ -50,6 +50,7 @@ using fMQMacroStop           = void(*)(const char*);
 using fMQLoadPlugin          = void(*)(const char*);
 using fMQUnloadPlugin        = void(*)(const char*);
 using fMQGetPluginInterface  = PluginInterface* (*)();
+using fMQPostUnloadPlugin    = void(*)(const char*);
 
 /**
  * Structure representing a loaded plugin.
@@ -83,6 +84,7 @@ struct MQPlugin
 	fMQLoadPlugin        LoadPlugin = nullptr;
 	fMQUnloadPlugin      UnloadPlugin = nullptr;
 	fMQGetPluginInterface GetPluginInterface = nullptr;
+	fMQPostUnloadPlugin  OnPostUnloadPlugin = nullptr;
 
 	MQPlugin*            pLast = nullptr;
 	MQPlugin*            pNext = nullptr;
@@ -121,9 +123,10 @@ MQLIB_OBJECT int LoadPlugin(std::string_view pluginName, bool save = false);
  * Unload a plugin by name.
  *
  * @param pluginName The name of the plugin to unload.
+ * @param save If true, save this plugin so that it is not loaded automatically.
  * @return True if the unload was successful.
  */
-MQLIB_OBJECT bool UnloadPlugin(std::string_view pluginName);
+MQLIB_OBJECT bool UnloadPlugin(std::string_view pluginName, bool save = false);
 
 /**
  * Get the address of an exported symbol from a loaded plugin.
@@ -181,7 +184,7 @@ public:
  * @param pluginName Name of the plugin to retrieve an interface from.
  * @return The plugin's interface object, or nullptr if it is not found or does not exist.
  */
-MQLIB_API PluginInterface* GetPluginInterface(std::string_view pluginName);
+MQLIB_OBJECT PluginInterface* GetPluginInterface(std::string_view pluginName);
 
 
 MQLIB_API DEPRECATE("Use mq::LoadPlugin instead of LoadMQ2Plugin")

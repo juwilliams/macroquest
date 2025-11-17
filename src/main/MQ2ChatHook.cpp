@@ -29,8 +29,8 @@ class CChatHook
 {
 public:
 #if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_COTF)
-	DETOUR_TRAMPOLINE_DEF(void, Trampoline, (const char* szMsg, DWORD dwColor, bool, bool, bool))
-	void Detour(const char* szMsg, DWORD dwColor, bool EqLog, bool dopercentsubst, bool makeStmlSafe)
+	DETOUR_TRAMPOLINE_DEF(void, Trampoline, (const char* szMsg, DWORD dwColor, bool, bool, bool, bool))
+	void Detour(const char* szMsg, DWORD dwColor, bool EqLog, bool dopercentsubst, bool makeStmlSafe, bool checkChatFilter)
 #else
 	DETOUR_TRAMPOLINE_DEF(void, Trampoline, (const char* szMsg, DWORD dwColor, bool, bool))
 	void Detour(const char* szMsg, DWORD dwColor, bool EqLog, bool dopercentsubst)
@@ -82,7 +82,11 @@ public:
 					"[{:02d}:{:02d}:{:02d}] {}\0", local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, szMsg);
 				*out = 0;
 
-				Trampoline(buffer.data(), dwColor, EqLog, dopercentsubst, makeStmlSafe);
+#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_COTF)
+				Trampoline(buffer.data(), dwColor, EqLog, dopercentsubst, makeStmlSafe, checkChatFilter);
+#else
+				Trampoline(buffer.data(), dwColor, EqLog, dopercentsubst);
+#endif
 				SkipTrampoline = true;
 			}
 #endif // HAS_CHAT_TIMESTAMPS
@@ -90,7 +94,7 @@ public:
 			if (!SkipTrampoline)
 			{
 #if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_COTF)
-				Trampoline(szMsg, dwColor, EqLog, dopercentsubst, makeStmlSafe);
+				Trampoline(szMsg, dwColor, EqLog, dopercentsubst, makeStmlSafe, checkChatFilter);
 #else
 				Trampoline(szMsg, dwColor, EqLog, dopercentsubst);
 #endif
@@ -151,7 +155,7 @@ public:
 	void UPCNotificationFlush_Detour()
 	{
 		CEverQuest* eq = (CEverQuest*)this;
-		char szBuf[128] = { 0 };
+		char szBuf[MAX_STRING] = { 0 };
 
 		if (eq->ucNotificationCount > 0)
 		{
@@ -203,7 +207,7 @@ void OutputTextToLog_Detour(const char* szMsg)
 void dsp_chat_no_events(const char* Text, int Color, bool doLog, bool doPercentConvert)
 {
 #if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_COTF)
-	pEverQuest.get_as<CChatHook>()->Trampoline(Text, Color, doLog, doPercentConvert, false);
+	pEverQuest.get_as<CChatHook>()->Trampoline(Text, Color, doLog, doPercentConvert, false, true);
 #else
 	pEverQuest.get_as<CChatHook>()->Trampoline(Text, Color, doLog, doPercentConvert);
 #endif

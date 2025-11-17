@@ -13,9 +13,17 @@
  */
 
 #include "pch.h"
+
 #include "MQ2Main.h"
 #include "CrashHandler.h"
 #include "MQVersionInfo.h"
+#include "Logging.h"
+
+#include "mq/base/WString.h"
+
+// warning C4996: 'strncpy': This function or variable may be unsafe. Consider using strncpy_s instead.
+// To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+#pragma warning (disable : 4996)
 
 // Crashpad client headers
 #include <client/crash_report_database.h>
@@ -26,8 +34,6 @@
 #include <spdlog/spdlog.h>
 #include <wil/resource.h>
 #include <filesystem>
-
-#include "mq/base/WString.h"
 
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")
@@ -49,13 +55,24 @@ namespace fs = std::filesystem;
 
 namespace mq {
 
+static void CrashHandler_Initialize();
+static void CrashHandler_Shutdown();
+
+static MQModule gCrashHandlerModule = {
+	"CrashHandler",               // Name
+	false,                        // CanUnload
+	CrashHandler_Initialize,      // Initialize
+	CrashHandler_Shutdown,        // Shutdown
+};
+DECLARE_MODULE_INITIALIZER(gCrashHandlerModule);
+
 // CrashHandler TODO:
 // - Improved crash notification to include information about what kind of unhandled exception occurred.
 // - Stretch: Create a way to notify the user that a process has crashed from the launcher.
 
 // Some of these settings are mirrored in MacroQuest.exe
 
-static bool gEnableCrashpad = true;                                  // Indicates if we we want to be using crashpad.
+static bool gEnableCrashpad = true;                                  // Indicates if we want to be using crashpad.
 static bool gEnableSharedCrashpad = true;                            // If using crashpad, use the shared crashpad process.
 static bool gEnableSilentCrashpad = false;                           // If using crashpad, crash & report silently.
 static bool gEnableCrashSubmissions = CRASHPAD_SUBMISSIONS_ENABLED;  // If using crashpad, we will submit them.
@@ -78,6 +95,9 @@ static crashpad::StringAnnotation<32> buildTimestampAnnotation("eqVersion");
 static crashpad::StringAnnotation<32> buildVersionAnnotation("mqVersion");
 static crashpad::StringAnnotation<36> buildCrashIdAnnotation("crashId");
 
+static crashpad::StringAnnotation<MAX_STRING> s_currentCommandAnnotation("mq.command");
+static crashpad::StringAnnotation<MAX_STRING> s_currentMacroData("mq.macro_data");
+
 static std::string s_sessionUuid;
 
 static LONG WINAPI OurCrashHandler(EXCEPTION_POINTERS* ex);
@@ -96,6 +116,8 @@ bool ShouldUploadCrash()
 {
 	return gEnableCrashSubmissions && !gCrashpadSubmissionURL.empty() && MQMAIN_VERSION_BUILD != 0;
 }
+
+std::unique_ptr<crashpad::CrashReportDatabase> s_database;
 
 // Use this function to start crashpad with a new crashpad process.
 bool InitializeCrashpad()
@@ -127,32 +149,32 @@ bool InitializeCrashpad()
 
 	const base::FilePath db(dbPath);
 	const base::FilePath handler(handlerPath);
-	const std::unique_ptr<crashpad::CrashReportDatabase> database = crashpad::CrashReportDatabase::Initialize(db);
+	s_database = crashpad::CrashReportDatabase::Initialize(db);
 
-	if (database == nullptr || database->GetSettings() == nullptr)
+	if (s_database == nullptr || s_database->GetSettings() == nullptr)
 	{
-		SPDLOG_ERROR("Failed to create crashpad::CrashReportDatabase");
+		LOG_ERROR("Failed to create crashpad::CrashReportDatabase");
 		return false;
 	}
 
 	if (ShouldUploadCrash())
 	{
-		database->GetSettings()->SetUploadsEnabled(true);
-		SPDLOG_INFO("Crash report submission is: enabled");
+		s_database->GetSettings()->SetUploadsEnabled(true);
+		LOG_INFO("Crash report submission is: enabled");
 
 		crashpad::UUID uuid;
-		database->GetSettings()->GetClientID(&uuid);
-		SPDLOG_INFO("Crash report guid: {}", uuid.ToString());
+		s_database->GetSettings()->GetClientID(&uuid);
+		LOG_INFO("Crash report guid: {}", uuid.ToString());
 	}
 	else
 	{
-		database->GetSettings()->SetUploadsEnabled(false);
-		SPDLOG_INFO("Crash report submission is: disabled");
+		s_database->GetSettings()->SetUploadsEnabled(false);
+		LOG_INFO("Crash report submission is: disabled");
 	}
 
 	gCrashpadClient = new crashpad::CrashpadClient();
 
-	SPDLOG_INFO("Initializing crashpad handler with path: {}", mq::wstring_to_utf8(handlerPath));
+	LOG_INFO("Initializing crashpad handler with path: {}", mq::wstring_to_utf8(handlerPath));
 
 	bool rc = gCrashpadClient->StartHandler(handler,
 		db,
@@ -182,7 +204,7 @@ bool InitializeCrashpad()
 		delete gCrashpadClient;
 		gCrashpadClient = nullptr;
 
-		SPDLOG_ERROR("Failed to start crashpad process.");
+		LOG_ERROR("Failed to start crashpad process.");
 	}
 
 	return success;
@@ -198,7 +220,7 @@ void InitializeCrashpadPipe(const std::string& pipeName)
 	// Only continue if using a shared crashpad instance and we haven't already initialized
 	if (gEnableCrashpad && !gCrashpadClient && gEnableSharedCrashpad)
 	{
-		SPDLOG_INFO("Received crashpad pipe name: {0}", pipeName);
+		LOG_INFO("Received crashpad pipe name: {0}", pipeName);
 		std::wstring wPipeName = mq::utf8_to_wstring(pipeName);
 
 		// Open database and read the guid.
@@ -206,13 +228,13 @@ void InitializeCrashpadPipe(const std::string& pipeName)
 		const std::unique_ptr<crashpad::CrashReportDatabase> database = crashpad::CrashReportDatabase::Initialize(base::FilePath(dbPath));
 		if (!database || !database->GetSettings())
 		{
-			SPDLOG_ERROR("Failed to create crashpad::CrashReportDatabase");
+			LOG_ERROR("Failed to create crashpad::CrashReportDatabase");
 			return;
 		}
 
 		crashpad::UUID uuid;
 		database->GetSettings()->GetClientID(&uuid);
-		SPDLOG_INFO("Enabling shared crash reporter. Crash report guid: {}", uuid.ToString());
+		LOG_INFO("Enabling shared crash reporter. Crash report guid: {}", uuid.ToString());
 
 		gCrashpadClient = new crashpad::CrashpadClient();
 
@@ -222,7 +244,7 @@ void InitializeCrashpadPipe(const std::string& pipeName)
 		}
 		else
 		{
-			SPDLOG_ERROR("Failed to initialize shared crash reporter!");
+			LOG_ERROR("Failed to initialize shared crash reporter!");
 		}
 	}
 }
@@ -247,7 +269,7 @@ static std::string MakeMiniDump(const std::string& filename, EXCEPTION_POINTERS*
 		CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
 	if (!hFile)
 	{
-		SPDLOG_ERROR("Failed to create crash dump file: {}", dumpFilename);
+		LOG_ERROR("Failed to create crash dump file: {}", dumpFilename);
 		return {};
 	}
 
@@ -449,7 +471,7 @@ void UninstallUnhandledExceptionFilter()
 
 //============================================================================
 
-void InitializeCrashHandler()
+void CrashHandler_Startup()
 {
 	// Load preferences. Decide if we want to enable the crash reporting system. These are primarily aimed at developers.
 	gEnableCrashpad = GetPrivateProfileBool("Crash Handler", "EnableCrashpad", gEnableCrashpad, internal_paths::MQini);
@@ -467,7 +489,7 @@ void InitializeCrashHandler()
 	}
 	else if (!gEnableCrashpad)
 	{
-		SPDLOG_INFO("Crashpad is disabled.");
+		LOG_INFO("Crashpad is disabled.");
 	}
 
 	// Set some annotations.
@@ -480,16 +502,39 @@ void InitializeCrashHandler()
 	SetCrashId();
 }
 
+void CrashHandler_SetLastCommand(const char* command)
+{
+	if (gEnableCrashSubmissions)
+	{
+		if (!command || !command[0])
+			s_currentCommandAnnotation.Clear();
+		else
+			s_currentCommandAnnotation.Set(command);
+	}
+}
+
+void CrashHandler_SetLastMacroData(const char* macroData)
+{
+	if (gEnableCrashSubmissions)
+	{
+		if (!macroData || !macroData[0])
+			s_currentMacroData.Clear();
+		else
+			s_currentMacroData.Set(macroData);
+	}
+}
+
 //----------------------------------------------------------------------------
 
-void DoCrash(SPAWNINFO* pChar, char* szLine)
+static crashpad::StringAnnotation<32> s_synthesizedAnnotation("synthesized");
+
+void DoCrash(PlayerClient*, const char* szLine)
 {
 	char szArg1[MAX_STRING] = { 0 };
 	GetArg(szArg1, szLine, 1);
 
 	// Indicate to crash reporting that this is a synthetic crash
-	auto pAnno = new crashpad::StringAnnotation<32>("synthesized");
-	pAnno->Set(base::StringPiece("true"));
+	s_synthesizedAnnotation.Set(base::StringPiece("true"));
 
 	if (ci_equals(szArg1, "force"))
 	{
@@ -502,21 +547,18 @@ void DoCrash(SPAWNINFO* pChar, char* szLine)
 		crashpad::CaptureContext(&context);
 		crashpad::CrashpadClient::DumpWithoutCrash(context);
 	}
+
+	s_synthesizedAnnotation.Clear();
 }
 
-void InitializeMQ2CrashHandler()
+void CrashHandler_Initialize()
 {
 	AddCommand("/crash", DoCrash);
 }
 
-void ShutdownMQ2CrashHandler()
+void CrashHandler_Shutdown()
 {
 	RemoveCommand("/crash");
-}
-
-void InvokeExceptionHandler(EXCEPTION_POINTERS* p)
-{
-	OurCrashHandler(p);
 }
 
 } // namespace mq

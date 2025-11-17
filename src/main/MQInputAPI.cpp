@@ -687,12 +687,12 @@ void MouseTo(PlayerClient* pChar, const char* szLine)
 
 static void InstallDirectInputHooks()
 {
+	// hook ProcessDeviceEvents
+	EzDetour(__ProcessDeviceEvents, ProcessDeviceEvents_Detour, ProcessDeviceEvents_Trampoline);
+
 	if (g_pDIKeyboard)
 	{
 		uintptr_t* vtable = *reinterpret_cast<uintptr_t**>(g_pDIKeyboard.get());
-
-		// hook Process
-		EzDetour(__ProcessDeviceEvents, ProcessDeviceEvents_Detour, ProcessDeviceEvents_Trampoline);
 
 		// hook GetDeviceState
 		GetDeviceState = vtable[9];
@@ -759,8 +759,9 @@ void InputAPI_Shutdown()
 	{
 		RemoveDetour(GetDeviceData);
 		RemoveDetour(GetDeviceState);
-		RemoveDetour(__ProcessDeviceEvents);
 	}
+
+	RemoveDetour(__ProcessDeviceEvents);
 }
 
 void InputAPI_Pulse()

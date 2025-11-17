@@ -137,10 +137,24 @@ bool MQ2KeyRingType::dataFamiliar(const char* szIndex, MQTypeVar& Ret)
 	return dataGetKeyRing(eFamiliar, szIndex, Ret);
 }
 
-#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_TOL)
+#if HAS_TELEPORTATION_KEYRING
 bool MQ2KeyRingType::dataTeleportationItem(const char* szIndex, MQTypeVar& Ret)
 {
 	return dataGetKeyRing(eTeleportationItem, szIndex, Ret);
+}
+#endif
+
+#if HAS_ACTIVATED_ITEM_KEYRING
+bool MQ2KeyRingType::dataActivatedItem(const char* szIndex, MQTypeVar& Ret)
+{
+	return dataGetKeyRing(eActivatedItem, szIndex, Ret);
+}
+#endif
+
+#if HAS_EQUIPMENT_KEYRING
+bool MQ2KeyRingType::dataEquipmentItem(const char* szIndex, MQTypeVar& Ret)
+{
+	return dataGetKeyRing(eEquipmentKeyRing, szIndex, Ret);
 }
 #endif
 

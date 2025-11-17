@@ -14,16 +14,16 @@
 
 #include "pch.h"
 
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
-#include <imgui/misc/cpp/imgui_stdlib.h>
-#include <sol/sol.hpp>
+#include "eqlib/game/UITextures.h"
+#include "mq/imgui/Widgets.h"
+
+#include "imgui/imgui.h"
+#include "imgui/imgui_internal.h"
+#include "imgui/misc/cpp/imgui_stdlib.h"
+#include "sol/sol.hpp"
 
 #include <optional>
 #include <string>
-
-#include "eqlib/UITextures.h"
-#include "mq/imgui/Widgets.h"
 
 namespace mq::lua::bindings {
 
@@ -263,7 +263,7 @@ void RegisterBindings_ImGuiUserTypes(sol::state_view lua)
 	imDrawList.set_function("AddNgonFilled", &ImDrawList::AddNgonFilled);
 	imDrawList.set_function("AddText", sol::overload(
 		[](ImDrawList& mThis, const ImVec2& pos, int col, std::string_view text) { mThis.AddText(pos, ImU32(col), text.data(), text.data() + text.size()); },
-		[](ImDrawList& mThis, const ImFont* font, float font_size, const ImVec2& pos, int col, std::string_view text) { mThis.AddText(font, font_size, pos, ImU32(col), text.data(), text.data() + text.size()); }));
+		[](ImDrawList& mThis, ImFont* font, float font_size, const ImVec2& pos, int col, std::string_view text) { mThis.AddText(font, font_size, pos, ImU32(col), text.data(), text.data() + text.size()); }));
 
 	imDrawList.set_function("AddPolyline", [](ImDrawList& mThis, const sol::as_table_t<std::vector<ImVec2>>& points, int col, int flags, float thickness)
 		{
@@ -304,7 +304,7 @@ void RegisterBindings_ImGuiUserTypes(sol::state_view lua)
 
 	imDrawList.set_function("AddTextureAnimation",
 		[](ImDrawList& mThis, const std::unique_ptr<eqlib::CTextureAnimation>& anim, const ImVec2& pos, std::optional<ImVec2> size) {
-			return imgui::DrawTextureAnimation(&mThis, anim.get(), pos, size.has_value() ? *size : eqlib::CXSize());
+			return imgui::DrawTextureAnimation(&mThis, anim.get(), pos, size.has_value() ? eqlib::CXSize(*size) : eqlib::CXSize());
 		});
 
 

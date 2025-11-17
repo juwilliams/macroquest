@@ -58,15 +58,15 @@ CoroutineResult LuaCoroutine::RunCoroutine(const std::vector<sol::object>& args)
 	return Run(args, this);
 }
 
-LuaCoroutine::LuaCoroutine(sol::thread& thread, LuaThread* luaThread)
-	: thread(thread)
+LuaCoroutine::LuaCoroutine(sol::thread thread, LuaThread* luaThread)
+	: thread(std::move(thread))
 	, luaThread(luaThread)
 {
 }
 
-std::shared_ptr<LuaCoroutine> LuaCoroutine::Create(sol::thread& thread, LuaThread* luaThread)
+std::shared_ptr<LuaCoroutine> LuaCoroutine::Create(sol::thread thread, LuaThread* luaThread)
 {
-	auto co_ptr = std::make_shared<LuaCoroutine>(thread, luaThread);
+	auto co_ptr = std::make_shared<LuaCoroutine>(std::move(thread), luaThread);
 	return co_ptr;
 }
 
@@ -77,9 +77,19 @@ bool LuaCoroutine::CheckCondition(std::optional<sol::function>& func)
 
 	try
 	{
+		lua_State* L = thread.state();
 		auto check_thread = sol::thread::create(thread.state());
-		sol::function check(check_thread.state(), *func);
-		return check();
+
+		sol::protected_function check_func(check_thread.state(), *func);
+		sol::protected_function_result result = check_func();
+
+		if (!result.valid())
+		{
+			sol::error err = result;
+			luaL_error(thread.state(), "Error in mq.delay callback: %s", err.what());
+		}
+
+		return result.get<bool>();
 	}
 	catch (sol::error& ex)
 	{

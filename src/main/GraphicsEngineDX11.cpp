@@ -19,6 +19,8 @@
 
 #include "GraphicsEngine.h"
 #include "ImGuiBackend.h"
+#include "MQRenderDoc.h"
+#include "Logging.h"
 
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -68,7 +70,7 @@ struct ScopedStateBlock
 		Capture();
 	}
 
-	ScopedStateBlock::~ScopedStateBlock()
+	~ScopedStateBlock()
 	{
 		Release();
 	}
@@ -156,7 +158,6 @@ public:
 	HRESULT OnSetFullscreenState(IDXGISwapChain* SwapChain, BOOL Fullscreen, IDXGIOutput* Target);
 	HRESULT OnResizeBuffers(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
 
-private:
 	wil::com_ptr<IDXGISwapChain> m_swapChain;
 	wil::com_ptr<ID3D11Device> m_device;
 	wil::com_ptr<ID3D11DeviceContext> m_deviceContext;
@@ -168,7 +169,6 @@ private:
 static MQGraphicsEngineDX11* s_gfxEngine = nullptr;
 
 //============================================================================
-
 
 struct DXGISwapChainHook
 {
@@ -186,7 +186,7 @@ struct DXGISwapChainHook
 		return s_gfxEngine->OnPresent(GetThisSwapChain(), SyncInterval, Flags);
 	}
 
-	static inline HRESULT Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+	static HRESULT Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
 	{
 		return reinterpret_cast<DXGISwapChainHook*>(pSwapChain)->Present_Trampoline(SyncInterval, Flags);
 	}
@@ -197,7 +197,7 @@ struct DXGISwapChainHook
 		return s_gfxEngine->OnSetFullscreenState(GetThisSwapChain(), Fullscreen, target);
 	}
 
-	static inline HRESULT SetFullscreenState(IDXGISwapChain* pSwapChain, BOOL Fullscreen, IDXGIOutput* target)
+	static HRESULT SetFullscreenState(IDXGISwapChain* pSwapChain, BOOL Fullscreen, IDXGIOutput* target)
 	{
 		return reinterpret_cast<DXGISwapChainHook*>(pSwapChain)->SetFullscreenState_Trampoline(Fullscreen, target);
 	}
@@ -235,7 +235,7 @@ static wil::unique_hwnd CreateTempWindow()
 	ATOM registerResult = RegisterClassExW(&wndClass);
 	if (registerResult == 0)
 	{
-		SPDLOG_ERROR("CreateTempWindow: Failed to register window class: {}", GetLastError());
+		LOG_ERROR("CreateTempWindow: Failed to register window class: {}", GetLastError());
 		return nullptr;
 	}
 
@@ -244,7 +244,7 @@ static wil::unique_hwnd CreateTempWindow()
 
 	if (!result)
 	{
-		SPDLOG_ERROR("CreateTempWindow: Failed to create window: {}", GetLastError());
+		LOG_ERROR("CreateTempWindow: Failed to create window: {}", GetLastError());
 		return nullptr;
 	}
 
@@ -279,7 +279,7 @@ bool MQGraphicsEngineDX11::InstallHooks()
 
 	if (hr != S_OK)
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to create device");
+		LOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to create device");
 		return false;
 	}
 
@@ -287,7 +287,7 @@ bool MQGraphicsEngineDX11::InstallHooks()
 	hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgiDevice);
 	if (hr != S_OK)
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to query dxgi device");
+		LOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to query dxgi device");
 		return false;
 	}
 
@@ -295,7 +295,7 @@ bool MQGraphicsEngineDX11::InstallHooks()
 	hr = dxgiDevice->GetAdapter(&adapter);
 	if (hr != S_OK)
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to get adapter");
+		LOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to get adapter");
 		return false;
 	}
 
@@ -303,7 +303,7 @@ bool MQGraphicsEngineDX11::InstallHooks()
 	hr = adapter->GetParent(__uuidof(IDXGIFactory), (void**)&factory);
 	if (hr != S_OK)
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to get factory");
+		LOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to get factory");
 		return false;
 	}
 
@@ -326,20 +326,21 @@ bool MQGraphicsEngineDX11::InstallHooks()
 		hr = factory->CreateSwapChain(device.get(), &desc, &swapChain);
 		if (hr != S_OK)
 		{
-			SPDLOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to create swap chain");
+			LOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to create swap chain");
 		}
 		else
 		{
+			// Hook DXGISwapChain
 			uintptr_t* vtable = *(uintptr_t**)swapChain.get();
 
 			InstallDetour(vtable[2], &DXGISwapChainHook::Release_Detour,
-				DXGISwapChainHook::Release_Trampoline_Ptr, "DXGISwapChain_Release");
+				DXGISwapChainHook::Release_Trampoline_Ptr, "DXGISwapChainHook::Release");
 			InstallDetour(vtable[8], &DXGISwapChainHook::Present_Detour,
-				DXGISwapChainHook::Present_Trampoline_Ptr, "DXGISwapChain_Present");
+				DXGISwapChainHook::Present_Trampoline_Ptr, "DXGISwapChainHook::Present");
 			InstallDetour(vtable[10], &DXGISwapChainHook::SetFullscreenState_Detour,
-				DXGISwapChainHook::SetFullscreenState_Trampoline_Ptr, "DXGISwapChain_SetFullscreenState");
+				DXGISwapChainHook::SetFullscreenState_Trampoline_Ptr, "DXGISwapChainHook::SetFullscreenState");
 			InstallDetour(vtable[13], &DXGISwapChainHook::ResizeBuffers_Detour,
-				DXGISwapChainHook::ResizeBuffers_Trampoline_Ptr, "DXGISwapChain_ResizeBuffers");
+				DXGISwapChainHook::ResizeBuffers_Trampoline_Ptr, "DXGISwapChainHook::ResizeBuffers");
 
 			success = true;
 		}
@@ -347,7 +348,7 @@ bool MQGraphicsEngineDX11::InstallHooks()
 
 	if (!UnregisterClassW(WndClassName, nullptr))
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to unregister window class: {}", GetLastError());
+		LOG_ERROR("MQGraphicsEngineDX11::InstallHooks: Failed to unregister window class: {}", GetLastError());
 	}
 
 	return success;
@@ -394,7 +395,7 @@ OverlayHookStatus MQGraphicsEngineDX11::InitializeOverlayHooks()
 
 	if (!InstallHooks())
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::InitializeOverlayHooks: Failed to hook DirectX11, We won't be able to render into the game!");
+		LOG_ERROR("MQGraphicsEngineDX11::InitializeOverlayHooks: Failed to hook DirectX11, We won't be able to render into the game!");
 		return OverlayHookStatus::Failed;
 	}
 
@@ -444,7 +445,7 @@ void MQGraphicsEngineDX11::AcquireDevice(IDXGISwapChain* SwapChain)
 
 			m_deviceAcquired = true;
 
-			SPDLOG_INFO("MQGraphicsEngineDX11::AcquireDevice: Device acquired.");
+			LOG_INFO("MQGraphicsEngineDX11::AcquireDevice: Device acquired.");
 
 			ImGui_Initialize();
 			CreateDeviceObjects();
@@ -453,7 +454,7 @@ void MQGraphicsEngineDX11::AcquireDevice(IDXGISwapChain* SwapChain)
 		{
 			m_device.reset();
 
-			SPDLOG_ERROR("MQGraphicsEngineDX11::AcquireDevice: Failed to acquire device from SwapChain: {}", hr);
+			LOG_ERROR("MQGraphicsEngineDX11::AcquireDevice: Failed to acquire device from SwapChain: {}", hr);
 		}
 	}
 	else
@@ -466,7 +467,7 @@ void MQGraphicsEngineDX11::OnDeviceLost(IDXGISwapChain* SwapChain)
 {
 	if (SwapChain == m_swapChain && SwapChain != nullptr)
 	{
-		SPDLOG_INFO("MQGraphicsEngineDX11::OnDeviceLost: Device has been lost.");
+		LOG_INFO("MQGraphicsEngineDX11::OnDeviceLost: Device has been lost.");
 
 		InvalidateDeviceObjects();
 
@@ -487,7 +488,7 @@ HRESULT MQGraphicsEngineDX11::OnPresent(IDXGISwapChain* pSwapChain, UINT SyncInt
 	// Prevent re-entrancy. This happens because we will render ImGui from this call, which also calls Present
 	// on its own viewport swap chains.
 	static bool sbInPresentDetour = false;
-	if (sbInPresentDetour)
+	if (sbInPresentDetour || (Flags & DXGI_PRESENT_TEST) != 0)
 	{
 		return DXGISwapChainHook::Present(pSwapChain, SyncInterval, Flags);
 	}
@@ -495,11 +496,6 @@ HRESULT MQGraphicsEngineDX11::OnPresent(IDXGISwapChain* pSwapChain, UINT SyncInt
 	sbInPresentDetour = true;
 
 	AcquireDevice(pSwapChain);
-
-	if (m_deviceAcquired)
-	{
-		PostUpdateScene();
-	}
 
 	HRESULT result = DXGISwapChainHook::Present(pSwapChain, SyncInterval, Flags);
 
@@ -553,6 +549,8 @@ void MQGraphicsEngineDX11::ImGui_DrawFrame()
 
 void MQGraphicsEngineDX11::ImGui_RenderDrawData()
 {
+	RenderDoc_ScopedEvent e(MQColor(104, 149, 255), L"ImGui_RenderDrawData");
+
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
@@ -618,7 +616,7 @@ bool MQGraphicsEngineDX11::IsFullScreen() const
 	HRESULT hr = m_swapChain->GetFullscreenState(&fullscreenState, nullptr);
 	if (hr != S_OK)
 	{
-		SPDLOG_ERROR("MQGraphicsEngineDX11::IsFullScreen: Failed to read fullscreen state from SwapChain: {}", hr);
+		LOG_ERROR("MQGraphicsEngineDX11::IsFullScreen: Failed to read fullscreen state from SwapChain: {}", hr);
 	}
 
 	return fullscreenState != 0;

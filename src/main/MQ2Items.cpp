@@ -58,8 +58,14 @@ int GetKeyRingCount(KeyRingType keyRingType)
 	case eIllusion:
 	case eFamiliar:
 	case eHeroForge:
-#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_TOL)
+#if HAS_TELEPORTATION_KEYRING
 	case eTeleportationItem:
+#endif
+#if HAS_ACTIVATED_ITEM_KEYRING
+	case eActivatedItem:
+#endif
+#if HAS_EQUIPMENT_KEYRING
+	case eEquipmentKeyRing:
 #endif
 		break;
 	default: return 0;
@@ -72,9 +78,32 @@ int GetMountCount() { return GetKeyRingCount(eMount); }
 int GetIllusionCount() { return GetKeyRingCount(eIllusion); }
 int GetFamiliarCount() { return GetKeyRingCount(eFamiliar); }
 int GetHeroForgeCount() { return GetKeyRingCount(eHeroForge); }
-#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_TOL)
-int GetTeleportationItemCount() { return GetKeyRingCount(eTeleportationItem); }
+int GetTeleportationItemCount()
+{
+#if HAS_TELEPORTATION_KEYRING
+	return GetKeyRingCount(eTeleportationItem);
+#else
+	return 0;
 #endif
+}
+
+int GetActivatedItemCount()
+{
+#if HAS_ACTIVATED_ITEM_KEYRING
+	return GetKeyRingCount(eActivatedItem);
+#else
+	return 0;
+#endif
+}
+
+int GetEquipmentItemCount()
+{
+#if HAS_EQUIPMENT_KEYRING
+	return GetKeyRingCount(eEquipmentKeyRing);
+#else
+	return 0;
+#endif
+}
 
 static bool gbDidUpdateKeyRing = false;
 static uint64_t gLastKeyRingUpdate = 0;
@@ -164,8 +193,13 @@ public:
 
 		// Columns:
 		// Icon, Index, Container?, ItemIndex?, LinkedItem?, Template
+#if IS_CLIENT_DATE(20251103)
+		constexpr int columns = 8;
+#else
+		constexpr int columns = 6;
+#endif
 
-		if (ImGui::BeginTable("##InvSlotTable", 6, tableFlags, ImGui::GetContentRegionAvail()))
+		if (ImGui::BeginTable("##InvSlotTable", columns, tableFlags, ImGui::GetContentRegionAvail()))
 		{
 			ImGui::TableSetupScrollFreeze(0, 1);
 			ImGui::TableSetupColumn("##Index", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, -1.0f);
@@ -173,6 +207,10 @@ public:
 			ImGui::TableSetupColumn("Container", ImGuiTableColumnFlags_WidthFixed, -1.0f);
 			ImGui::TableSetupColumn("Item Index", ImGuiTableColumnFlags_WidthFixed, -1.0f);
 			ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch, -1.0f);
+#if IS_CLIENT_DATE(20251103)
+			ImGui::TableSetupColumn("Usable", ImGuiTableColumnFlags_WidthFixed, 20.0f);
+			ImGui::TableSetupColumn("Locked", ImGuiTableColumnFlags_WidthFixed, 20.0f);
+#endif
 			ImGui::TableSetupColumn("Screen ID", ImGuiTableColumnFlags_WidthFixed, -1.0f);
 			ImGui::TableHeadersRow();
 
@@ -180,6 +218,8 @@ public:
 			{
 				CInvSlot* pInvSlot = pInvSlotMgr->SlotArray[i];
 				if (!pInvSlot || !pInvSlot->bEnabled) continue;
+
+				ImGui::PushID(pInvSlot);
 
 				ImGui::TableNextRow();
 
@@ -213,6 +253,14 @@ public:
 					ImGui::PopID();
 				}
 
+#if IS_CLIENT_DATE(20251103)
+				ImGui::TableNextColumn(); // Usable
+				ImGui::Checkbox("##usable", &pInvSlot->bUsable);
+
+				ImGui::TableNextColumn(); // Locked
+				ImGui::Checkbox("##locked", &pInvSlot->bLocked);
+#endif
+
 				ImGui::TableNextColumn(); // Template
 				if (pInvSlot->pInvSlotWnd)
 				{
@@ -221,6 +269,8 @@ public:
 						ImGui::Text("%s", pXMLData->ScreenID.c_str());
 					}
 				}
+
+				ImGui::PopID();
 			}
 
 			ImGui::EndTable();
@@ -420,7 +470,17 @@ public:
 			ImGui::Text("Teleportation Key Ring Max Capacity: %d (base)", pLocalPC->BaseKeyRingSlots[eTeleportationItem]);
 			break;
 #endif
+#if HAS_ACTIVATED_ITEM_KEYRING
+		case eItemContainerActivatedKeyRingItems:
+			ImGui::Text("Activated Key Ring Max Capacity: %d (base)", pLocalPC->BaseKeyRingSlots[eActivatedItem]);
+			break;
 #endif
+#if HAS_EQUIPMENT_KEYRING
+		case eItemContainerEquipmentKeyRingItems:
+			ImGui::Text("Equipment Key Ring Max Capacity: %d (base)", pLocalPC->BaseKeyRingSlots[eEquipmentKeyRing]);
+			break;
+#endif
+#endif // HAS_KEYRING_WINDOW
 
 		// This case is just to remove warnings when all above cases are gated
 		case eItemContainerInvalid:

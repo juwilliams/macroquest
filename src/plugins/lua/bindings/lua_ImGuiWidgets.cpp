@@ -331,7 +331,7 @@ static std::tuple<float, bool> VSliderFloatVec2(const char* label, const ImVec2&
 }
 
 static std::tuple<float, bool> VSliderFloat(const char* label, float sizeX, float sizeY, float value, float v_min, float v_max,
-	std::optional<const char*>& format, std::optional<int> flags)
+	std::optional<const char*> format, std::optional<int> flags)
 {
 	return VSliderFloatVec2(label, { sizeX, sizeY }, value, v_min, v_max, format, flags);
 }
@@ -766,10 +766,21 @@ void RegisterBindings_ImGuiWidgets(sol::table& ImGui)
 	});
 	ImGui.set_function("ImageButton", sol::overload(
 		[](const char* str_id, ImTextureID texture_id, const ImVec2& image_size, std::optional<ImVec2> uv0, std::optional<ImVec2> uv1,
-			std::optional<ImVec4> bg_col, std::optional<ImVec4> tint_col) { return ImGui::ImageButton(str_id, texture_id, image_size, uv0.value_or(ImVec2(0, 0)), uv1.value_or(ImVec2(1, 1)), bg_col.value_or(ImVec4(1, 1, 1, 1)), tint_col.value_or(ImVec4(0, 0, 0, 0))); },
+			std::optional<ImVec4> bg_col, std::optional<ImVec4> tint_col) { return ImGui::ImageButton(str_id, texture_id, image_size, uv0.value_or(ImVec2(0, 0)), uv1.value_or(ImVec2(1, 1)), bg_col.value_or(ImVec4(0, 0, 0, 0)), tint_col.value_or(ImVec4(1, 1, 1, 1))); },
 		// OBSOLETE:
 		[](ImTextureID texture_id, const ImVec2& size, std::optional<ImVec2> uv0, std::optional<ImVec2> uv1, std::optional<int> frame_padding,
-			std::optional<ImVec4> bg_col, std::optional<ImVec4> tint_col) { return ImGui::ImageButton(texture_id, size, uv0.value_or(ImVec2(0, 0)), uv1.value_or(ImVec2(1, 1)), frame_padding.value_or(-1), bg_col.value_or(ImVec4(0, 0, 0, 0)), tint_col.value_or(ImVec4(1, 1, 1, 1))); }
+			std::optional<ImVec4> bg_col, std::optional<ImVec4> tint_col)
+		{
+			return ImGui::ImageButton(
+				"##NOID",
+				texture_id,
+				size,
+				uv0.value_or(ImVec2(0, 0)),
+				uv1.value_or(ImVec2(1, 1)),
+				bg_col.value_or(ImVec4(0, 0, 0, 0)),
+				tint_col.value_or(ImVec4(1, 1, 1, 1))
+			);
+		}
 	));
 	#pragma endregion
 
@@ -895,7 +906,7 @@ void RegisterBindings_ImGuiWidgets(sol::table& ImGui)
 	ImGui.set_function("EndMenuBar", &ImGui::EndMenuBar);
 	ImGui.set_function("BeginMainMenuBar", &ImGui::BeginMainMenuBar);
 	ImGui.set_function("EndMainMenuBar", &ImGui::EndMainMenuBar);
-	ImGui.set_function("BeginMenu", [](const char* label, std::optional<bool>& enabled) { return ImGui::BeginMenu(label, enabled.value_or(true)); });
+	ImGui.set_function("BeginMenu", [](const char* label, std::optional<bool> enabled) { return ImGui::BeginMenu(label, enabled.value_or(true)); });
 	ImGui.set_function("EndMenu", &ImGui::EndMenu);
 	ImGui.set_function("MenuItem",
 		[](const char* label, std::optional<const char*> shortcut, std::optional<bool> selected, std::optional<bool> enabled) {

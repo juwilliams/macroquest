@@ -91,6 +91,18 @@ void ShutdownMQ2Pulse();
 void InitializeChatHook();
 void ShutdownChatHook();
 
+constexpr int CHAT_SAY = 0x0001;
+constexpr int CHAT_TELL = 0x0002;
+constexpr int CHAT_OOC = 0x0004;
+constexpr int CHAT_SHOUT = 0x0008;
+constexpr int CHAT_AUC = 0x0010;
+constexpr int CHAT_GUILD = 0x0020;
+constexpr int CHAT_GROUP = 0x0040;
+constexpr int CHAT_RAID = 0x0080;
+constexpr int CHAT_CHAT = 0x0100;
+#define CHATEVENT(x)                             (gEventChat & x)
+
+
 // Logging / Console output
 MQLIB_API void WriteChatColor(const char* Line, int Color = USERCOLOR_DEFAULT, int Filter = 0);
 MQLIB_API void WriteChatf(const char* Format, ...);
@@ -105,7 +117,6 @@ MQLIB_API void DebugSpewAlwaysFile(const char* szFormat, ...);
 MQLIB_API void DebugSpewNoFile(const char* szFormat, ...);
 
 /* SPAWN HANDLING */
-MQLIB_API bool SetNameSpriteState(SPAWNINFO* pSpawn, bool Show);
 MQLIB_API bool IsTargetable(SPAWNINFO* pSpawn);
 MQLIB_API bool AreNameSpritesCustomized();
 
@@ -221,9 +232,9 @@ MQLIB_API int GetMountCount();
 MQLIB_API int GetIllusionCount();
 MQLIB_API int GetFamiliarCount();
 MQLIB_API int GetHeroForgeCount();
-#if IS_EXPANSION_LEVEL(EXPANSION_LEVEL_TOL)
 MQLIB_API int GetTeleportationItemCount();
-#endif
+MQLIB_API int GetActivatedItemCount();
+MQLIB_API int GetEquipmentItemCount();
 
 MQLIB_API bool IsActiveAA(const char* pSpellName);
 MQLIB_API CXWnd* GetAdvLootPersonalListItem(DWORD ListIndex, DWORD type);
@@ -236,8 +247,6 @@ MQLIB_API int RangeRandom(int min, int max);
 
 MQLIB_API int GetCharMaxBuffSlots();
 MQLIB_API int GetCharMaxLevel();
-MQLIB_API int GetBodyType(SPAWNINFO* pSpawn);
-MQLIB_API eSpawnType GetSpawnType(SPAWNINFO* pSpawn);
 
 MQLIB_OBJECT bool IsRaidMember(const char* SpawnName);
 MQLIB_OBJECT bool IsRaidMember(SPAWNINFO* pSpawn);
@@ -255,31 +264,26 @@ MQLIB_API uint32_t GetRaidMarkedTargetID(int index);
 MQLIB_API bool IsAssistNPC(SPAWNINFO* pSpawn);
 MQLIB_API void DoFace(SPAWNINFO* pChar, CVector3 Position);
 
-MQLIB_API CMQ2Alerts CAlerts;
+MQLIB_API int64_t GetGuildIDByName(const char* szGuild);
+MQLIB_API const char* GetGuildByID(int64_t GuildID);
 
-struct RefreshKeyRingsThreadData
-{
-	char ItemName[256];
-	CSidlScreenWnd *phWnd;
-	bool bExact;
-	bool bUseCmd;
-};
-
-MQLIB_API ItemDefinition* GetItemFromContents(ItemClient* c);
-
-MQLIB_API bool AddMacroLine(const char* FileName, char* szLine, size_t Linelen, int* LineNumber, int localLine);
-
+MQLIB_API int GetBodyType(PlayerClient* pSpawn);
+MQLIB_API eSpawnType GetSpawnType(SPAWNINFO* pSpawn);
 MQLIB_API const char* GetLightForSpawn(SPAWNINFO* pSpawn);
 MQLIB_API int GetDeityTeamByID(int DeityID);
 MQLIB_API int ConColor(SPAWNINFO* pSpawn);
+MQLIB_API float FindSpeed(SPAWNINFO* pSpawn);
+MQLIB_API bool IsNamed(SPAWNINFO* pSpawn);
 
-MQLIB_API const char* GetGuildByID(int64_t GuildID);
-MQLIB_API int64_t GetGuildIDByName(const char* szGuild);
+MQLIB_API CMQ2Alerts CAlerts;
+
+// Item Utilities
+
+MQLIB_API ItemDefinition* GetItemFromContents(ItemClient* c); // Use c->GetItemDefinition() instead
 
 MQLIB_API ItemClient* GetEnviroContainer();
 MQLIB_API CContainerWnd* FindContainerForContents(ItemClient* pContents);
-MQLIB_API float FindSpeed(SPAWNINFO* pSpawn);
-MQLIB_API bool IsNamed(SPAWNINFO* pSpawn);
+
 
 
 MQLIB_API int ItemHasStat(ItemClient* pCont, std::string_view search);
@@ -292,18 +296,17 @@ inline bool ItemHasStat(ItemClient* pCont, int* num, const char* buffer)
 	return *num != 0;
 }
 
-
 MQLIB_API const char* GetLoginName();
 MQLIB_API float DistanceToPoint(SPAWNINFO* pSpawn, float xLoc, float yLoc);
 MQLIB_API float Distance3DToPoint(SPAWNINFO* pSpawn, float xLoc, float yLoc, float zLoc);
 MQLIB_API char* ShowSpellSlotInfo(EQ_Spell* pSpell, char* szBuffer, size_t BufferSize, const char* lineBreak = "<br>");
 MQLIB_API char* ParseSpellEffect(EQ_Spell* pSpell, int i, char* szBuffer, size_t BufferSize, int level = 100);
 
-MQLIB_API int GetSpellAttrib(EQ_Spell* pSpell, int index);
-MQLIB_API int64_t GetSpellBase(EQ_Spell* pSpell, int index);
-MQLIB_API int64_t GetSpellBase2(EQ_Spell* pSpell, int index);
-MQLIB_API int64_t GetSpellMax(EQ_Spell* pSpell, int index);
-MQLIB_API int GetSpellCalc(EQ_Spell* pSpell, int index);
+MQLIB_API int GetSpellAttrib(const EQ_Spell* pSpell, int index);
+MQLIB_API int64_t GetSpellBase(const EQ_Spell* pSpell, int index);
+MQLIB_API int64_t GetSpellBase2(const EQ_Spell* pSpell, int index);
+MQLIB_API int64_t GetSpellMax(const EQ_Spell* pSpell, int index);
+MQLIB_API int GetSpellCalc(const EQ_Spell* pSpell, int index);
 
 MQLIB_API void SlotValueCalculate(char* szBuff, EQ_Spell* pSpell, int i, double mp = 1.0);
 MQLIB_API int64_t CalcValue(int calc, int64_t base, int64_t max, int tick, int minlevel = MAX_PC_LEVEL, int level = MAX_PC_LEVEL);
@@ -329,6 +332,7 @@ MQLIB_API uint32_t GetItemTimer(ItemClient* pItem);
 MQLIB_API ItemClient* GetItemContentsByName(const char* ItemName);
 MQLIB_API DWORD GetAvailableSlots(ItemClient* pContainer, ItemClient* pItem, int *firstavailableslot);
 MQLIB_API bool LoH_HT_Ready();
+MQLIB_API ECombatState GetCombatState();
 
 /* MQ2DATAVARS */
 MQLIB_API char* GetFuncParam(const char* szMacroLine, int ParamNum, char* szParamName, size_t ParamNameLen, char* szParamType, size_t ParamTypeLen);
@@ -341,6 +345,7 @@ MQLIB_API bool LoadCfgFile(const char* Filename, bool Delayed = FromPlugin);
 
 /* MQ2GROUNDSPAWNS */
 
+using ObservedSpawnPtr = MQEQObjectPtr<PlayerClient>;
 using EQGroundItemPtr = MQEQObjectPtr<EQGroundItem>;
 using EQPlacedItemPtr = MQEQObjectPtr<EQPlacedItem>;
 using AnyMQGroundItem = std::variant<std::monostate, EQGroundItemPtr, EQPlacedItemPtr>;
@@ -351,9 +356,6 @@ enum class MQGroundSpawnType
 	Ground,
 	Placed
 };
-
-inline auto EQObjectID(EQGroundItem* Object) { return Object->DropID; }
-inline auto EQObjectID(EQPlacedItem* Object) { return Object->RealEstateItemID; }
 
 struct MQGroundSpawn
 {
@@ -436,9 +438,6 @@ MQLIB_OBJECT CXStr GetFriendlyNameForGroundItem(const EQGroundItem* pItem);
 MQLIB_OBJECT CXStr GetFriendlyNameForPlacedItem(const EQPlacedItem* pItem);
 MQLIB_API char* GetFriendlyNameForGroundItem(PGROUNDITEM pItem, char* szName, size_t BufferSize);
 
-inline auto EQObjectID(PlayerClient* pSpawn) { return pSpawn->SpawnID; }
-using ObservedSpawnPtr = MQEQObjectPtr<PlayerClient>;
-
 MQLIB_API void AddObservedEQObject(const std::shared_ptr<MQTransient>& Object);
 MQLIB_API void InvalidateObservedEQObject(void* Object);
 
@@ -469,10 +468,8 @@ MQLIB_API bool CheckAlertForRecursion(MQSpawnSearch* pSearchSpawn, uint32_t id);
 MQLIB_API void WriteFilterNames();
 MQLIB_API int FindSpellListByName(const char* szName);
 MQLIB_API float StateHeightMultiplier(DWORD StandState);
-extern void SuperWhoDisplay(SPAWNINFO* pChar, MQSpawnSearch* pSearchSpawn, DWORD Color);
-extern void SuperWhoDisplay(SPAWNINFO* pSpawn, DWORD Color);
+MQLIB_API PlayerClient* GetClosestBanker(bool forInteraction = true);
 
-MQLIB_API bool        Include(const char* szFile, int* LineNumber);
 MQLIB_API const char* GetFullZone(int ZoneID);
 MQLIB_API int         GetZoneID(const char* ZoneShortName);
 MQLIB_API const char* GetShortZone(int ZoneID);
@@ -489,7 +486,7 @@ MQLIB_API int         GetWorldState();
 MQLIB_API float       GetMeleeRange(PlayerClient*, PlayerClient*);
 MQLIB_API uint32_t    GetSpellGemTimer(int nGem);
 MQLIB_API uint32_t    GetSpellBuffTimer(int SpellID);
-MQLIB_API bool        HasExpansion(int nExpansion);
+MQLIB_API bool        HasExpansion(int64_t nExpansion);
 MQLIB_API void        ListMercAltAbilities();
 MQLIB_API ItemClient*   FindItemBySlot(int InvSlot, int BagSlot = -1, ItemContainerInstance location = eItemContainerPossessions);
 MQLIB_API ItemContainer* GetItemContainerByType(ItemContainerInstance type);
@@ -628,12 +625,8 @@ MQLIB_API    const char* GetTeleportName(DWORD id);
 MQLIB_API HMODULE GetCurrentModule();
 MQLIB_API DWORD CALLBACK MQ2End(void* lpParameter);
 MQLIB_API DWORD CALLBACK GetlocalPlayerOffset();
-MQLIB_API void MQ2Shutdown();
+void DoMainThreadShutdown();
 MQLIB_API HANDLE hUnloadComplete;
-
-MQLIB_API void InitializeMQ2AutoInventory();
-MQLIB_API void ShutdownMQ2AutoInventory();
-MQLIB_API void PulseMQ2AutoInventory();
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Functions that were built into commands and people used DoCommand to execute                  //
@@ -657,20 +650,6 @@ constexpr int LIGHT_COUNT = 13;
 //#define MAX_COMBINES		61
 //#define MAX_ITEMTYPES		71
 //#define MAX_SPELLEFFECTS	487
-
-constexpr int GAMESTATE_PRECHARSELECT  = -1;
-constexpr int GAMESTATE_CHARSELECT     = 1;
-constexpr int GAMESTATE_CHARCREATE     = 2;
-constexpr int GAMESTATE_POSTCHARSELECT = 3;
-constexpr int GAMESTATE_SOMETHING      = 4;
-constexpr int GAMESTATE_INGAME         = 5;
-constexpr int GAMESTATE_LOGGINGIN      = 253;
-constexpr int GAMESTATE_UNLOADING      = 255;
-
-#define XKF_SHIFT               1
-#define XKF_CTRL                2
-#define XKF_LALT                4
-#define XKF_RALT                8
 
 MQLIB_API void RemoveFindItemMenu();
 MQLIB_API bool WillFitInBank(ItemClient* pContent);
@@ -708,13 +687,6 @@ MQLIB_OBJECT int AddTokenMessageCmd(int StringID, fMQTokenMessageCmd Command);
 MQLIB_OBJECT void RemoveTokenMessageCmd(int StringID, int CallbackID);
 
 //----------------------------------------------------------------------------
-
-enum class GetMoneyFromStringFormat {
-	Long = 0,       // e.g. pp, gp, sp, cp
-	Short = 1,      // e.g. p, g, s, c
-};
-MQLIB_API uint64_t GetMoneyFromString(const char* string, GetMoneyFromStringFormat format = GetMoneyFromStringFormat::Long);
-MQLIB_API void FormatMoneyString(char* szBuffer, size_t bufferLength, uint64_t moneyAmount, GetMoneyFromStringFormat format = GetMoneyFromStringFormat::Long);
 
 MQLIB_API MembershipLevel GetMembershipLevel();
 inline DEPRECATE("Use GetMembershipLevel instead of GetSubscriptionLevel") int GetSubscriptionLevel() { return (int)GetMembershipLevel(); }

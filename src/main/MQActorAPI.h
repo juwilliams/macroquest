@@ -14,11 +14,11 @@
 
 #pragma once
 
-#ifndef MQ2MAIN_EXPORTS
+#if !defined(MQ2MAIN_IMPL) && !defined(__clang__)
 #error This header should only be included from the MQ2Main project
 #endif
 
-#include "mq/base/Common.h"
+#include "mq/base/PluginHandle.h"
 #include "mq/api/ActorAPI.h"
 
 namespace mq {
@@ -48,8 +48,6 @@ public:
 	void RemoveActor(
 		postoffice::Dropbox*& dropbox,
 		const MQPluginHandle& pluginHandle = mqplugin::ThisPluginHandle);
-
-	void OnUnloadPlugin(MQPlugin* plugin);
 };
 
 extern MQActorAPI* pActorAPI;

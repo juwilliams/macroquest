@@ -53,7 +53,8 @@ public:
 		Profile,
 		Account,
 		Class,
-		Level
+		Level,
+		CustomCharacterIni,
 	};
 
 	LoginProfileType() : MQ2Type("LoginProfile")
@@ -65,6 +66,7 @@ public:
 		ScopedTypeMember(LoginProfileMembers, Account);
 		ScopedTypeMember(LoginProfileMembers, Class);
 		ScopedTypeMember(LoginProfileMembers, Level);
+		ScopedTypeMember(LoginProfileMembers, CustomCharacterIni);
 	}
 
 	virtual bool GetMember(MQVarPtr VarPtr, const char* Member, char* Index, MQTypeVar& Dest) override
@@ -121,6 +123,11 @@ public:
 		case LoginProfileMembers::Level:
 			Dest.Int = record->characterLevel;
 			Dest.Type = mq::datatypes::pIntType;
+			return true;
+		case LoginProfileMembers::CustomCharacterIni:
+			strcpy_s(DataTypeTemp, record->customClientIni ? record->customClientIni->c_str() : "");
+			Dest.Ptr = &DataTypeTemp[0];
+			Dest.Type = mq::datatypes::pStringType;
 			return true;
 		}
 
@@ -197,12 +204,6 @@ bool MQ2AutoLoginType::dataAutoLogin(const char* szName, MQTypeVar& Ret)
 	return true;
 }
 
-template <typename T>
-static void Post(const proto::login::MessageId& messageId, const T& data)
-{
-	Post(messageId, data.SerializeAsString());
-}
-
 static void Post(const proto::login::MessageId& messageId, const std::string& data)
 {
 	proto::login::LoginMessage message;
@@ -217,10 +218,16 @@ static void Post(const proto::login::MessageId& messageId, const std::string& da
 	s_autologinDropbox.Post(address, message);
 }
 
+template <typename T>
+static void Post(const proto::login::MessageId& messageId, const T& data)
+{
+	Post(messageId, data.SerializeAsString());
+}
+
 void NotifyCharacterLoad(const std::shared_ptr<ProfileRecord>& ptr)
 {
 	auto& record = *ptr;
-	
+
 	// Fill in the profile first.
 	if (!record.profileName.empty())
 	{
@@ -534,11 +541,12 @@ void Cmd_Loginchar(SPAWNINFO* pChar, char* szLine)
 	}
 	else if (!record.serverName.empty() && !record.characterName.empty())
 	{
-		login::db::ReadFullProfile(record);
+		login::db::ReadAccount(record);
 
-		if (!record.profileName.empty())
-			LoginProfile(
-				record.profileName.c_str(),
+		if (!record.accountName.empty() && !record.accountPassword.empty())
+			LoginCharacter(
+				record.accountName.c_str(),
+				record.accountPassword.c_str(),
 				record.serverName.c_str(),
 				record.characterName.c_str());
 		else
@@ -887,7 +895,7 @@ PLUGIN_API void InitializePlugin()
 {
 	pAutoLoginType = new MQ2AutoLoginType;
 	pLoginProfileType = new LoginProfileType;
-	AddMQ2Data("AutoLogin", MQ2AutoLoginType::dataAutoLogin);
+	AddTopLevelObject("AutoLogin", MQ2AutoLoginType::dataAutoLogin);
 
 	if (!login::db::InitDatabase((fs::path(gPathConfig) / "login.db").string()))
 	{
@@ -973,7 +981,7 @@ PLUGIN_API void ShutdownPlugin()
 	RemoveDetour(pfnWritePrivateProfileStringA);
 
 	LoginReset();
-	RemoveMQ2Data("AutoLogin");
+	RemoveTopLevelObject("AutoLogin");
 	delete pAutoLoginType;
 	delete pLoginProfileType;
 
@@ -1082,6 +1090,31 @@ CXStr GetListItemText(CListWnd* pWnd, int row, int col)
 #endif
 
 	return pWnd->GetItemText(row, col);
+}
+
+bool IsListItemEnabled(CListWnd* pWnd, int row, int col)
+{
+	if (!pWnd) return false;
+
+#if HAS_GAMEFACE_UI
+	if (GetGameState() == GAMESTATE_PRECHARSELECT)
+	{
+		auto pListWnd = reinterpret_cast<eqlib::eqmain::CListWnd*>(pWnd);
+
+		if (row >= 0 && row < pListWnd->ItemsArray.GetCount())
+		{
+			return pListWnd->ItemsArray[row].bEnabled;
+		}
+
+		return false;
+	}
+#endif // HAS_GAMEFACE_UI
+
+	if (row >= 0 && row < pWnd->ItemsArray.GetCount())
+	{
+		return pWnd->ItemsArray[row].bEnabled;
+	}
+	return false;
 }
 
 int GetListCurSel(CListWnd* pWnd)
@@ -1207,8 +1240,9 @@ PLUGIN_API void OnPulse()
 	}
 }
 
-static bool bShowAutoLoginOverlay = true;
-static bool bShowOverlayDebugInfo = false;
+static bool s_showAutoLoginOverlay = true;
+static bool s_showOverlayDebugInfo = false;
+static bool s_showServerList = false;
 
 static bool InputInt(const char* label, int* v, int step = 1, int step_fast = 10, ImGuiInputTextFlags flags = 0)
 {
@@ -1484,9 +1518,9 @@ static void ShowAutoLoginOverlay(bool* p_open)
 
 		default: break;
 		}
-	
+
 		ImGui::Spacing();
-	
+
 		if (ImGui::CollapsingHeader("Settings"))
 		{
 			ImGui::Checkbox("Kick Active Character", &Login::m_settings.KickActiveCharacter);
@@ -1529,12 +1563,71 @@ static void ShowAutoLoginOverlay(bool* p_open)
 
 		if (ImGui::BeginPopupContextWindow())
 		{
-			ImGui::MenuItem("Show Debug Info", nullptr, &bShowOverlayDebugInfo);
+			ImGui::MenuItem("Show Debug Info", nullptr, &s_showOverlayDebugInfo);
+			ImGui::MenuItem("Show Server List", nullptr, &s_showServerList);
 			ImGui::Separator();
 			if (p_open && ImGui::MenuItem("Close")) *p_open = false;
 			ImGui::EndPopup();
 		}
 	}
+	ImGui::End();
+}
+
+static void ShowServerList(bool* p_open)
+{
+	if (!g_pLoginClient )
+		return;
+
+	if (ImGui::Begin("Server List", p_open, 0))
+	{
+		auto& serverList = g_pLoginClient->ServerList;
+
+		if (ImGui::BeginTable("##ServerList", 7, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
+		{
+			ImGui::TableSetupColumn("Name");
+			ImGui::TableSetupColumn("Flags");
+			ImGui::TableSetupColumn("RuleSet");
+			ImGui::TableSetupColumn("Desc");
+			ImGui::TableSetupColumn("Status");
+			ImGui::TableSetupColumn("Expansion");
+			ImGui::TableSetupColumn("TrueBox");
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableHeadersRow();
+
+			for (EQLS::EQClientServerData* server : serverList)
+			{
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::Text("%s", server->ServerName.c_str());
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%08x", server->Flags);
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%s", server->RuleSet.c_str());
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%s", server->Description.c_str());
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%08x", server->StatusFlags);
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%s", server->Expansion > 0 && server->Expansion <= NUM_EXPANSIONS ? szExpansions[server->Expansion - 1] : "");
+
+				ImGui::TableNextColumn();
+				if (server->TrueBoxStatus == 0)
+					ImGui::TextUnformatted("No");
+				else if (server->TrueBoxStatus == 1)
+					ImGui::TextUnformatted("Yes");
+				else if (server->TrueBoxStatus >= 2)
+					ImGui::Text("Relaxed (%d)", server->TrueBoxStatus);
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
 	ImGui::End();
 }
 
@@ -1546,7 +1639,12 @@ PLUGIN_API void OnUpdateImGui()
 	if (gameState == GAMESTATE_CHARSELECT || gameState == GAMESTATE_PRECHARSELECT
 		|| (gameState == GAMESTATE_INGAME && Login::get_record() != nullptr))
 	{
-		ShowAutoLoginOverlay(&bShowAutoLoginOverlay);
+		ShowAutoLoginOverlay(&s_showAutoLoginOverlay);
+	}
+
+	if (gameState == GAMESTATE_PRECHARSELECT && s_showServerList)
+	{
+		ShowServerList(&s_showServerList);
 	}
 }
 
