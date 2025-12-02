@@ -120,6 +120,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>$(LoaderDependenciesRelease);%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)acms$(TargetExt)</OutputFile>
     </Link>
     <Manifest />
   </ItemDefinitionGroup>
