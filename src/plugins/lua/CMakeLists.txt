@@ -25,6 +25,7 @@ set(MQ2Lua_HEADERS
     "LuaEvent.h"
     "LuaCoroutine.h"
     "LuaImGui.h"
+    "LuaModuleRegistry.h"
     "LuaThread.h"
     "LuaInterface.h"
     "pch.h"
@@ -62,6 +63,7 @@ set(MQ2Lua_SOURCES
     "LuaCoroutine.cpp"
     "LuaEvent.cpp"
     "LuaImGui.cpp"
+    "LuaModuleRegistry.cpp"
     "LuaThread.cpp"
     "MQ2Lua.cpp"
 )
@@ -114,7 +116,7 @@ protobuf_generate(
 )
 
 # Link the proto library to main project
-target_link_libraries(MQ2Lua PRIVATE
+target_link_libraries(MQ2Lua PUBLIC
     MQ2Lua-proto
 )
 
@@ -146,7 +148,7 @@ target_compile_definitions(MQ2Lua PRIVATE
 # Include directories
 # ---------------------------------------------------------------------
 target_include_directories(MQ2Lua PRIVATE
-    "${ProjectDir}"
+    "${CMAKE_CURRENT_LIST_DIR}/"
 )
 
 # ---------------------------------------------------------------------

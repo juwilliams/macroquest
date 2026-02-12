@@ -20,7 +20,9 @@
 #include "LuaEvent.h"
 #include "LuaActor.h"
 #include "LuaImGui.h"
+#include "LuaModuleRegistry.h"
 #include "bindings/lua_Bindings.h"
+#include "bindings/lua_MQBindings.h"
 #include "imgui/ImGuiUtils.h"
 #include "imgui/ImGuiFileDialog.h"
 #include "imgui/ImGuiTextEditor.h"
@@ -67,7 +69,7 @@ static std::string s_moduleDirName = "modules";
 static LuaEnvironmentSettings s_environment;
 static std::chrono::milliseconds s_infoGC = 3600s; // 1 hour
 static bool s_squelchStatus = false;
-static bool s_verboseErrors = true;
+bool g_verboseErrors = true;
 
 // this is static and will never change
 static std::string s_configPath = (std::filesystem::path(gPathConfig) / "MQ2Lua.yaml").string();
@@ -86,75 +88,54 @@ std::vector<std::shared_ptr<LuaThread>> s_pending;
 
 std::unordered_map<uint32_t, LuaThreadInfo> s_infoMap;
 
-#pragma region Shared Function Definitions
-
-void DebugStackTrace(lua_State* L, const char* message)
+static void RegisterBuiltInModules()
 {
-	std::string_view svMessage{ message ? message : "nil" };
-	LuaError("%.*s", svMessage.length(), svMessage.data());
-
-	if (s_verboseErrors)
+	// Register built-in modules through the same registry path as external plugins.
+	auto& registry = GetLuaModuleRegistry();
+	auto register_builtin = [&](const char* name, const LuaModuleFactory factory)
 	{
-		int top = lua_gettop(L);
-
-		struct StackLine {
-			std::string str;
-			int a;
-			int b;
-
-			StackLine(std::string str_, int i_, int top_)
-				: str(std::move(str_))
-				, a(i_)
-				, b(i_ - (top_ + 1))
-			{}
-		};
-		std::vector<StackLine> lines;
-
-		for (int i = top; i >= 1; i--)
+		if (!registry.Register(name, factory))
 		{
-			int t = lua_type(L, i);
-			switch (t)
-			{
-			case LUA_TSTRING: {
-				const char* str = lua_tostring(L, i);
-				if (string_equals(str, message) && i == top) {
-					top -= 3; // skip exception, location, and error.
-					i -= 2;
-					break;
-				}
-				lines.emplace_back(fmt::format("`{}'", str), i, top);
-				break;
-			}
+			WriteChatf("MQ2Lua: Failed to register built-in module '%s'.", name);
+		}
+	};
 
-			case LUA_TBOOLEAN:
-				lines.emplace_back(lua_toboolean(L, i) ? "true" : "false", i, top);
-				break;
-
-			case LUA_TNUMBER:
-				lines.emplace_back(fmt::format("{}", lua_tonumber(L, i)), i, top);
-				break;
-
-			case LUA_TUSERDATA:
-				lines.emplace_back(fmt::format("[{}]", luaL_tolstring(L, i, NULL)), i, top);
-				break;
-
-			default:
-				lines.emplace_back(fmt::format("{}", lua_typename(L, t)), i, top);
-				break;
-			}
+	register_builtin("mq", [](const sol::this_state s)
+	{
+		sol::state_view sv{ s };
+		sol::table mq = sv.create_table();
+		if (const auto thread = LuaThread::get_from(sv))
+		{
+			bindings::RegisterBindings_MQ(thread.get(), mq);
+			bindings::RegisterBindings_MQMacroData(mq);
+			return sol::make_object(s, mq);
 		}
 
-		if (lines.size() > 0)
-		{
-			LuaError("---- Begin Stack (size: %i) ----", lines.size());
-			for (const StackLine& line : lines)
-			{
-				LuaError("%i -- (%i) ---- %s", line.a, line.b, line.str.c_str());
-			}
-			LuaError("---- End Stack ----\n");
-		}
-	}
+		return sol::make_object(s, sol::nil);
+	});
+
+	register_builtin("actors", [](const sol::this_state s)
+	{
+		return sol::make_object(s, LuaActors::RegisterLua(s));
+	});
+
+	register_builtin("ImGui", [](const sol::this_state s)
+	{
+		return sol::make_object(s, bindings::RegisterBindings_ImGui(s));
+	});
+
+	register_builtin("ImPlot", [](const sol::this_state s)
+	{
+		return sol::make_object(s, bindings::RegisterBindings_ImPlot(s));
+	});
+
+	register_builtin("Zep", [](const sol::this_state s)
+	{
+		return sol::make_object(s, bindings::RegisterBindings_Zep(s));
+	});
 }
+
+#pragma region Shared Function Definitions
 
 bool DoStatus()
 {
@@ -886,7 +867,7 @@ static void ReadSettings()
 		}
 	}
 
-	s_verboseErrors = s_configNode["verboseErrors"].as<bool>(false);
+	g_verboseErrors = s_configNode["verboseErrors"].as<bool>(false);
 
 	std::string tempDirName = s_luaDirName;
 	if (mq::test_and_set(tempDirName, s_configNode[KEY_LUA_DIR].as<std::string>(tempDirName)) || s_environment.luaDir.empty())
@@ -1561,9 +1542,9 @@ static void DrawLuaSettings()
 		s_configNode[KEY_SHOW_MENU] = s_showMenu;
 	}
 
-	if (ImGui::Checkbox("Print Lua Stack in Exception Messages", &s_verboseErrors))
+	if (ImGui::Checkbox("Print Lua Stack in Exception Messages", &g_verboseErrors))
 	{
-		s_configNode["verboseErrors"] = s_verboseErrors;
+		s_configNode["verboseErrors"] = g_verboseErrors;
 	}
 
 	ImGui::NewLine();
@@ -1845,6 +1826,7 @@ PLUGIN_API void InitializePlugin()
 	AddSettingsPanel("plugins/Lua", DrawLuaSettings);
 
 	s_pluginInterface = new LuaPluginInterfaceImpl();
+	RegisterBuiltInModules();
 
 	bindings::InitializeBindings_MQMacroData();
 
@@ -2288,6 +2270,10 @@ PLUGIN_API void OnUnloadPlugin(const char* pluginName)
 
 	// Visit all of our currently running scripts and terminate any that might be utilizing this plugin as a dependency.
 	MQPlugin* plugin = GetPlugin(pluginName);
+	if (plugin)
+	{
+		// Best-effort cleanup in case a plugin forgets to unregister its module.
+	}
 
 	s_running.erase(std::remove_if(s_running.begin(), s_running.end(),
 		[&](const std::shared_ptr<LuaThread>& thread) -> bool
