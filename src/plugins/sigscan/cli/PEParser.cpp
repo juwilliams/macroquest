@@ -13,6 +13,7 @@
  */
 
 #include "PEParser.h"
+#include <algorithm>
 #include <cstring>
 
 namespace sigscan {
@@ -82,6 +83,7 @@ bool PEFile::Load(const std::wstring& filePath)
 		sec.virtualSize = section->Misc.VirtualSize;
 		sec.rawDataOffset = section->PointerToRawData;
 		sec.rawDataSize = section->SizeOfRawData;
+		sec.characteristics = section->Characteristics;
 		m_sections.push_back(sec);
 	}
 
@@ -124,6 +126,31 @@ bool PEFile::GetTextSection(uint32_t& outRVA, uint32_t& outSize) const
 	return false;
 }
 
+bool PEFile::GetCodeBounds(uint32_t& outRVA, uint32_t& outSize) const
+{
+	uint32_t minRVA = UINT32_MAX;
+	uint32_t maxEnd = 0;
+
+	for (const auto& sec : m_sections)
+	{
+		if (sec.characteristics & IMAGE_SCN_CNT_CODE)
+		{
+			if (sec.virtualAddress < minRVA)
+				minRVA = sec.virtualAddress;
+			uint32_t end = sec.virtualAddress + sec.virtualSize;
+			if (end > maxEnd)
+				maxEnd = end;
+		}
+	}
+
+	if (minRVA == UINT32_MAX)
+		return false;
+
+	outRVA = minRVA;
+	outSize = maxEnd - minRVA;
+	return true;
+}
+
 uint32_t PEFile::RVAToFileOffset(uint32_t rva) const
 {
 	for (const auto& sec : m_sections)
@@ -142,6 +169,56 @@ const uint8_t* PEFile::GetDataAtRVA(uint32_t rva) const
 	if (fileOffset == 0 || fileOffset >= m_fileSize)
 		return nullptr;
 	return m_mappedBase + fileOffset;
+}
+
+std::vector<uint8_t> PEFile::BuildCodeBuffer(uint32_t& outRVA, uint32_t& outSize) const
+{
+	// Find all code sections
+	uint32_t minRVA = UINT32_MAX;
+	uint32_t maxEnd = 0;
+
+	for (const auto& sec : m_sections)
+	{
+		if (sec.characteristics & IMAGE_SCN_CNT_CODE)
+		{
+			if (sec.virtualAddress < minRVA)
+				minRVA = sec.virtualAddress;
+			uint32_t end = sec.virtualAddress + sec.virtualSize;
+			if (end > maxEnd)
+				maxEnd = end;
+		}
+	}
+
+	if (minRVA == UINT32_MAX)
+	{
+		outRVA = 0;
+		outSize = 0;
+		return {};
+	}
+
+	uint32_t totalSize = maxEnd - minRVA;
+
+	// Fill with INT3 (0xCC) so gaps between sections won't match any real pattern
+	std::vector<uint8_t> buffer(totalSize, 0xCC);
+
+	// Copy each code section into its correct virtual offset
+	for (const auto& sec : m_sections)
+	{
+		if (!(sec.characteristics & IMAGE_SCN_CNT_CODE))
+			continue;
+
+		uint32_t offset = sec.virtualAddress - minRVA;
+		uint32_t copySize = std::min(sec.rawDataSize, sec.virtualSize);
+
+		if (sec.rawDataOffset + copySize <= m_fileSize)
+		{
+			std::memcpy(buffer.data() + offset, m_mappedBase + sec.rawDataOffset, copySize);
+		}
+	}
+
+	outRVA = minRVA;
+	outSize = totalSize;
+	return buffer;
 }
 
 } // namespace sigscan

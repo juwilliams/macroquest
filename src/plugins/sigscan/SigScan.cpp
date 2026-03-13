@@ -13,12 +13,16 @@
  */
 
 #include "SigScan.h"
+#include "ZydisHelper.h"
 
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <map>
+#include <numeric>
+#include <set>
 
 namespace sigscan {
 
@@ -123,6 +127,16 @@ ScanResult SigScanner::Scan(const SignatureEntry& entry) const
 		return result;
 	}
 
+	// Too many matches means the signature is too generic to be useful
+	if (matches.size() > 10)
+	{
+		result.confidence = ScanConfidence::NotFound;
+		std::ostringstream oss;
+		oss << "Too many matches (" << matches.size() << "), signature too generic";
+		result.errorMessage = oss.str();
+		return result;
+	}
+
 	uintptr_t matchAddr;
 
 	if (matches.size() == 1)
@@ -181,6 +195,322 @@ std::vector<ScanResult> SigScanner::ScanAll(const std::vector<SignatureEntry>& e
 	for (const auto& entry : entries)
 	{
 		results.push_back(Scan(entry));
+	}
+
+	return results;
+}
+
+std::vector<uintptr_t> SigScanner::FindRIPReferencesTo(uintptr_t targetAddr, int64_t tolerance) const
+{
+	std::vector<uintptr_t> results;
+
+	if (m_textBase == 0 || m_textSize == 0)
+		return results;
+
+	const uint8_t* base = reinterpret_cast<const uint8_t*>(m_textBase);
+	ZydisHelper zydis;
+
+	// Displacement-value scanning: for each position, try common instruction lengths
+	// and check if the 4-byte displacement at (instrLen - 4) points near our target.
+	// This avoids the REX prefix filter that misses many RIP-relative instructions.
+	for (size_t i = 0; i < m_textSize - 7; ++i)
+	{
+		for (int instrLen = 3; instrLen <= 8; ++instrLen)
+		{
+			if (i + instrLen > m_textSize)
+				break;
+
+			size_t dispPos = instrLen - 4;
+			if (dispPos < 1 || i + dispPos + 4 > m_textSize)
+				continue;
+
+			int32_t disp;
+			std::memcpy(&disp, &base[i + dispPos], 4);
+
+			// RIP-relative: target = instrEnd + disp
+			uintptr_t instrEnd = m_textBase + i + instrLen;
+			uintptr_t refTarget = instrEnd + static_cast<int64_t>(disp);
+
+			int64_t diff = static_cast<int64_t>(refTarget) - static_cast<int64_t>(targetAddr);
+			if (diff < -tolerance || diff > tolerance)
+				continue;
+
+			// Verify with Zydis that this is actually a valid RIP-relative instruction
+			auto decoded = zydis.DecodeBuffer(base + i, std::min<size_t>(15, m_textSize - i));
+			if (decoded.empty())
+				continue;
+
+			const auto& info = decoded[0];
+			if (info.length != static_cast<size_t>(instrLen))
+				continue;
+
+			if (info.hasRipRelative && info.ripDispOffset == dispPos)
+			{
+				results.push_back(refTarget);
+				if (results.size() >= 100)
+					return results;
+				break; // found valid decode for this position
+			}
+		}
+	}
+
+	return results;
+}
+
+ScanResult SigScanner::ScanGlobalByDelta(const SignatureEntry& entry, int64_t medianDelta) const
+{
+	ScanResult result;
+	result.name = entry.name;
+	result.oldAddress = std::stoull(entry.previousAddress, nullptr, 16);
+
+	// Predict where the global should be in the new binary
+	uintptr_t predictedAddr = static_cast<uintptr_t>(
+		static_cast<int64_t>(result.oldAddress) + medianDelta);
+
+	// Convert to actual address space for searching
+	uintptr_t predictedActual = predictedAddr - m_preferredBase + m_actualBase;
+
+	// Search for RIP-relative references to addresses near the predicted location
+	auto refs = FindRIPReferencesTo(predictedActual, 0x200);
+
+	if (refs.empty())
+	{
+		result.confidence = ScanConfidence::NotFound;
+		result.errorMessage = "No references found near predicted address (delta-guided)";
+		return result;
+	}
+
+	// Count how many references point to each unique address
+	std::map<uintptr_t, int> addrCounts;
+	for (uintptr_t addr : refs)
+		addrCounts[addr]++;
+
+	// Too many unique targets = too noisy to be reliable
+	if (addrCounts.size() > 20)
+	{
+		result.confidence = ScanConfidence::NotFound;
+		std::ostringstream oss;
+		oss << "Delta-guided: too many unique targets (" << addrCounts.size() << ") in search window";
+		result.errorMessage = oss.str();
+		return result;
+	}
+
+	// Pick the address closest to the predicted location (not most-referenced)
+	uintptr_t bestAddr = 0;
+	int64_t bestDist = INT64_MAX;
+	int bestCount = 0;
+	for (const auto& [addr, count] : addrCounts)
+	{
+		int64_t dist = std::abs(static_cast<int64_t>(addr) - static_cast<int64_t>(predictedActual));
+		if (dist < bestDist)
+		{
+			bestDist = dist;
+			bestAddr = addr;
+			bestCount = count;
+		}
+	}
+
+	// Convert back to preferred address space
+	uintptr_t preferredAddr = bestAddr - m_actualBase + m_preferredBase;
+
+	// Sanity check: the delta should be within a reasonable range of the median
+	int64_t actualDelta = static_cast<int64_t>(preferredAddr) - static_cast<int64_t>(result.oldAddress);
+	if (std::abs(actualDelta - medianDelta) > 0x10000)
+	{
+		result.confidence = ScanConfidence::NotFound;
+		std::ostringstream oss;
+		oss << "Delta-guided match at 0x" << std::hex << std::uppercase << preferredAddr
+			<< " has unusual delta (0x" << actualDelta << " vs median 0x" << medianDelta << ")";
+		result.errorMessage = oss.str();
+		return result;
+	}
+
+	result.newAddress = preferredAddr;
+	result.delta = actualDelta;
+	result.matchCount = bestCount;
+	result.confidence = ScanConfidence::Low;
+
+	std::ostringstream oss;
+	oss << "Delta-guided: " << bestCount << " references, closest of "
+		<< addrCounts.size() << " unique targets";
+	result.errorMessage = oss.str();
+
+	return result;
+}
+
+ScanResult SigScanner::ScanFunctionByDelta(const SignatureEntry& entry, int64_t medianDelta) const
+{
+	ScanResult result;
+	result.name = entry.name;
+	result.oldAddress = std::stoull(entry.previousAddress, nullptr, 16);
+
+	// Predict where the function should be in the new binary
+	uintptr_t predictedPreferred = static_cast<uintptr_t>(
+		static_cast<int64_t>(result.oldAddress) + medianDelta);
+	uintptr_t predictedActual = predictedPreferred - m_preferredBase + m_actualBase;
+
+	// Check if the predicted address is within our scan region
+	if (predictedActual < m_textBase || predictedActual >= m_textBase + m_textSize)
+	{
+		result.confidence = ScanConfidence::NotFound;
+		result.errorMessage = "Predicted address outside code sections (delta-guided)";
+		return result;
+	}
+
+	// Search for relative call/jump references to addresses near the predicted location.
+	// Functions are typically called via E8 (call rel32). Scan for E8 instructions
+	// whose target is near the predicted address.
+	const uint8_t* base = reinterpret_cast<const uint8_t*>(m_textBase);
+	std::map<uintptr_t, int> targetCounts;
+	int64_t tolerance = 0x200;
+
+	for (size_t i = 0; i < m_textSize - 5; ++i)
+	{
+		if (base[i] != 0xE8) // CALL rel32
+			continue;
+
+		int32_t rel;
+		std::memcpy(&rel, base + i + 1, 4);
+		uintptr_t callTarget = m_textBase + i + 5 + static_cast<int64_t>(rel);
+
+		int64_t diff = static_cast<int64_t>(callTarget) - static_cast<int64_t>(predictedActual);
+		if (diff >= -tolerance && diff <= tolerance)
+		{
+			targetCounts[callTarget]++;
+		}
+	}
+
+	if (targetCounts.empty())
+	{
+		result.confidence = ScanConfidence::NotFound;
+		result.errorMessage = "No call references found near predicted address (delta-guided)";
+		return result;
+	}
+
+	// Too many unique targets = too noisy
+	if (targetCounts.size() > 30)
+	{
+		result.confidence = ScanConfidence::NotFound;
+		std::ostringstream oss;
+		oss << "Delta-guided: too many unique call targets (" << targetCounts.size() << ")";
+		result.errorMessage = oss.str();
+		return result;
+	}
+
+	// Filter to plausible function starts: the byte before a function is typically
+	// 0xCC (INT3 padding), 0xC3 (RET), or the address is 16-byte aligned.
+	// Also require at least 2 callers to reduce false positives.
+	std::map<uintptr_t, int> validTargets;
+	for (const auto& [addr, count] : targetCounts)
+	{
+		if (addr <= m_textBase || addr >= m_textBase + m_textSize)
+			continue;
+
+		size_t offset = addr - m_textBase;
+		uint8_t prevByte = base[offset - 1];
+		bool aligned16 = (addr % 16 == 0);
+		bool afterPadding = (prevByte == 0xCC || prevByte == 0xC3 || prevByte == 0xCB);
+
+		if (aligned16 || afterPadding || count >= 3)
+			validTargets[addr] = count;
+	}
+
+	// Fall back to all targets if no valid ones found
+	const auto& candidates = validTargets.empty() ? targetCounts : validTargets;
+
+	// Pick the target closest to predicted address
+	uintptr_t bestAddr = 0;
+	int64_t bestDist = INT64_MAX;
+	int bestCount = 0;
+	for (const auto& [addr, count] : candidates)
+	{
+		int64_t dist = std::abs(static_cast<int64_t>(addr) - static_cast<int64_t>(predictedActual));
+		if (dist < bestDist)
+		{
+			bestDist = dist;
+			bestAddr = addr;
+			bestCount = count;
+		}
+	}
+
+	uintptr_t preferredAddr = bestAddr - m_actualBase + m_preferredBase;
+	int64_t actualDelta = static_cast<int64_t>(preferredAddr) - static_cast<int64_t>(result.oldAddress);
+
+	if (std::abs(actualDelta - medianDelta) > 0x10000)
+	{
+		result.confidence = ScanConfidence::NotFound;
+		result.errorMessage = "Delta-guided function match has unusual delta";
+		return result;
+	}
+
+	result.newAddress = preferredAddr;
+	result.delta = actualDelta;
+	result.matchCount = bestCount;
+	result.confidence = ScanConfidence::Low;
+
+	std::ostringstream oss;
+	oss << "Delta-guided: " << bestCount << " call refs, closest of "
+		<< targetCounts.size() << " unique targets";
+	result.errorMessage = oss.str();
+
+	return result;
+}
+
+std::vector<ScanResult> SigScanner::ScanAllWithFallback(const std::vector<SignatureEntry>& entries) const
+{
+	// First pass: normal signature scan
+	auto results = ScanAll(entries);
+
+	// Compute median delta from successful results
+	std::vector<int64_t> deltas;
+	for (const auto& r : results)
+	{
+		if (r.confidence == ScanConfidence::High && r.delta != 0)
+			deltas.push_back(r.delta);
+	}
+
+	if (deltas.size() < 10)
+		return results; // not enough data for delta-guided fallback
+
+	std::sort(deltas.begin(), deltas.end());
+	int64_t medianDelta = deltas[deltas.size() / 2];
+
+	// Collect addresses already claimed by first-pass results
+	std::set<uintptr_t> claimedAddresses;
+	for (const auto& r : results)
+	{
+		if (r.confidence != ScanConfidence::NotFound && r.newAddress != 0)
+			claimedAddresses.insert(r.newAddress);
+	}
+
+	// Second pass: delta-guided fallback for NOT_FOUND entries
+	int recovered = 0;
+	for (size_t i = 0; i < results.size(); ++i)
+	{
+		if (results[i].confidence != ScanConfidence::NotFound)
+			continue;
+
+		const auto& entry = entries[i];
+		ScanResult fallback;
+
+		if (entry.type == OffsetType::GlobalRef)
+			fallback = ScanGlobalByDelta(entry, medianDelta);
+		else
+			fallback = ScanFunctionByDelta(entry, medianDelta);
+
+		if (fallback.confidence != ScanConfidence::NotFound)
+		{
+			// Skip if this address was already claimed by another offset
+			if (claimedAddresses.count(fallback.newAddress))
+			{
+				results[i].errorMessage = "Delta-guided: address already claimed by another offset";
+				continue;
+			}
+
+			results[i] = fallback;
+			claimedAddresses.insert(fallback.newAddress);
+			++recovered;
+		}
 	}
 
 	return results;

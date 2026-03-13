@@ -28,6 +28,7 @@ struct PESection
 	uint32_t virtualSize;
 	uint32_t rawDataOffset;
 	uint32_t rawDataSize;
+	uint32_t characteristics;
 };
 
 class PEFile
@@ -44,8 +45,16 @@ public:
 	// Get the .text section info
 	bool GetTextSection(uint32_t& outRVA, uint32_t& outSize) const;
 
+	// Get combined bounds of all executable sections
+	bool GetCodeBounds(uint32_t& outRVA, uint32_t& outSize) const;
+
 	// Get a pointer to data at a given RVA
 	const uint8_t* GetDataAtRVA(uint32_t rva) const;
+
+	// Build a contiguous buffer mapping all code sections by virtual address.
+	// Fills gaps between sections with 0xCC (INT3). Returns the buffer, and sets
+	// outRVA/outSize to the base RVA and total size of the mapped region.
+	std::vector<uint8_t> BuildCodeBuffer(uint32_t& outRVA, uint32_t& outSize) const;
 
 	// Get all sections
 	const std::vector<PESection>& GetSections() const { return m_sections; }

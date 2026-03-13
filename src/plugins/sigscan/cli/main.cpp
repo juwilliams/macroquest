@@ -170,39 +170,35 @@ static int DoGenerate(int argc, char* argv[])
 	std::cout << "Loaded " << exePath << " (preferred base: 0x"
 		<< std::hex << pe.GetPreferredBase() << std::dec << ")\n";
 
-	uint32_t textRVA, textSize;
-	if (!pe.GetTextSection(textRVA, textSize))
+	// Build a contiguous code buffer that maps all executable sections
+	// by virtual address, filling gaps with INT3 (0xCC) to prevent false matches.
+	uint32_t codeRVA, codeSize;
+	auto codeBuffer = pe.BuildCodeBuffer(codeRVA, codeSize);
+	if (codeBuffer.empty())
 	{
-		std::cerr << "Error: No .text section found\n";
+		std::cerr << "Error: No executable sections found\n";
 		return 1;
 	}
 
-	const uint8_t* textData = pe.GetDataAtRVA(textRVA);
-	if (!textData)
-	{
-		std::cerr << "Error: Cannot read .text section\n";
-		return 1;
-	}
-
-	std::cout << ".text section: RVA 0x" << std::hex << textRVA
-		<< ", size 0x" << textSize << std::dec << "\n\n";
+	std::cout << "Code sections: RVA 0x" << std::hex << codeRVA
+		<< ", size 0x" << codeSize << std::dec << "\n\n";
 
 	// Set up generator.
-	// The offsets in the header are in preferred-base terms (e.g. 0x140XXXXXX).
-	// The PE file is memory-mapped at an arbitrary address.
-	// fakeActualBase maps so that (fakeActualBase + RVA) = mapped address of that RVA.
+	// fakeActualBase maps so that (fakeActualBase + RVA) = buffer address of that RVA.
 	uintptr_t preferredBase = pe.GetPreferredBase();
-	uintptr_t fakeActualBase = reinterpret_cast<uintptr_t>(textData) - textRVA;
-	uintptr_t textAddr = reinterpret_cast<uintptr_t>(textData);
+	const uint8_t* codeData = codeBuffer.data();
+	uintptr_t fakeActualBase = reinterpret_cast<uintptr_t>(codeData) - codeRVA;
+	uintptr_t codeAddr = reinterpret_cast<uintptr_t>(codeData);
 
 	sigscan::SigGenerator generator;
-	generator.SetTextSection(textAddr, textSize);
+	generator.SetTextSection(codeAddr, codeSize);
 	generator.SetPreferredBase(preferredBase, fakeActualBase);
 
 	// Generate signatures
 	std::vector<sigscan::SignatureEntry> entries;
-	int succeeded = 0, failed = 0;
+	int highConf = 0, lowConf = 0, failed = 0;
 	std::vector<std::string> failures;
+	std::vector<std::string> warnings;
 
 	for (size_t i = 0; i < offsets.size(); ++i)
 	{
@@ -221,7 +217,15 @@ static int DoGenerate(int argc, char* argv[])
 		if (result.success)
 		{
 			entries.push_back(result.entry);
-			++succeeded;
+			if (result.lowConfidence)
+			{
+				++lowConf;
+				warnings.push_back(off.name + " (multiple matches, will disambiguate by proximity)");
+			}
+			else
+			{
+				++highConf;
+			}
 		}
 		else
 		{
@@ -231,9 +235,17 @@ static int DoGenerate(int argc, char* argv[])
 	}
 
 	std::cout << "\n\nGeneration complete:\n"
-		<< "  Succeeded: " << succeeded << "\n"
-		<< "  Failed:    " << failed << "\n"
-		<< "  Total:     " << offsets.size() << "\n";
+		<< "  High confidence: " << highConf << "\n"
+		<< "  Low confidence:  " << lowConf << "\n"
+		<< "  Failed:          " << failed << "\n"
+		<< "  Total:           " << offsets.size() << "\n";
+
+	if (!warnings.empty())
+	{
+		std::cout << "\nLow confidence (scanner will pick nearest match):\n";
+		for (const auto& w : warnings)
+			std::cout << "  " << w << "\n";
+	}
 
 	if (!failures.empty())
 	{
@@ -317,31 +329,26 @@ static int DoScan(int argc, char* argv[])
 	std::cout << "Loaded " << exePath << " (preferred base: 0x"
 		<< std::hex << pe.GetPreferredBase() << std::dec << ")\n";
 
-	uint32_t textRVA, textSize;
-	if (!pe.GetTextSection(textRVA, textSize))
+	uint32_t codeRVA, codeSize;
+	auto codeBuffer = pe.BuildCodeBuffer(codeRVA, codeSize);
+	if (codeBuffer.empty())
 	{
-		std::cerr << "Error: No .text section found\n";
+		std::cerr << "Error: No executable sections found\n";
 		return 1;
 	}
 
-	const uint8_t* textData = pe.GetDataAtRVA(textRVA);
-	if (!textData)
-	{
-		std::cerr << "Error: Cannot read .text section\n";
-		return 1;
-	}
+	std::cout << "Scanning code sections: RVA 0x" << std::hex << codeRVA
+		<< ", size 0x" << codeSize << std::dec << "\n\n";
 
-	std::cout << "Scanning .text section: RVA 0x" << std::hex << textRVA
-		<< ", size 0x" << textSize << std::dec << "\n\n";
-
-	uintptr_t fakeActualBase = reinterpret_cast<uintptr_t>(textData) - textRVA;
-	uintptr_t textAddr = reinterpret_cast<uintptr_t>(textData);
+	const uint8_t* codeData = codeBuffer.data();
+	uintptr_t fakeActualBase = reinterpret_cast<uintptr_t>(codeData) - codeRVA;
+	uintptr_t codeAddr = reinterpret_cast<uintptr_t>(codeData);
 
 	sigscan::SigScanner scanner;
-	scanner.SetTextSection(textAddr, textSize);
+	scanner.SetTextSection(codeAddr, codeSize);
 	scanner.SetBaseAddresses(pe.GetPreferredBase(), fakeActualBase);
 
-	auto results = scanner.ScanAll(entries);
+	auto results = scanner.ScanAllWithFallback(entries);
 
 	// Generate and display report
 	auto report = sigscan::GenerateReport(results);

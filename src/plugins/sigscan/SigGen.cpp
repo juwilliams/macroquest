@@ -113,8 +113,8 @@ PatternData SigGenerator::BuildFunctionSignature(const uint8_t* data, size_t max
 				return result;
 		}
 
-		// Cap at 64 bytes
-		if (result.bytes.size() >= 64)
+		// Cap at 128 bytes
+		if (result.bytes.size() >= 128)
 			break;
 	}
 
@@ -217,8 +217,8 @@ PatternData SigGenerator::BuildGlobalSignature(const CodeReference& ref, int& ou
 	// Include context before and after for uniqueness.
 
 	// Read bytes around the reference instruction
-	const size_t contextBefore = 16;
-	const size_t maxLen = 64;
+	const size_t contextBefore = 32;
+	const size_t maxLen = 128;
 
 	uintptr_t sigStart = (ref.instrAddress > m_textBase + contextBefore)
 		? ref.instrAddress - contextBefore
@@ -269,7 +269,7 @@ PatternData SigGenerator::BuildGlobalSignature(const CodeReference& ref, int& ou
 				break;
 		}
 
-		if (result.bytes.size() >= 64)
+		if (result.bytes.size() >= 128)
 			break;
 	}
 
@@ -292,7 +292,7 @@ SigGenResult SigGenerator::GenerateForFunction(const std::string& name, uintptr_
 		return result;
 	}
 
-	size_t maxLen = std::min<size_t>(64, m_textBase + m_textSize - address);
+	size_t maxLen = std::min<size_t>(128, m_textBase + m_textSize - address);
 	const uint8_t* data = reinterpret_cast<const uint8_t*>(address);
 
 	PatternData pattern = BuildFunctionSignature(data, maxLen);
@@ -305,7 +305,14 @@ SigGenResult SigGenerator::GenerateForFunction(const std::string& name, uintptr_
 	}
 
 	int matches = CountMatches(pattern);
-	if (matches != 1)
+	if (matches == 0)
+	{
+		result.success = false;
+		result.errorMessage = "Pattern matches nothing (internal error)";
+		return result;
+	}
+
+	if (matches > m_maxAcceptableMatches)
 	{
 		result.success = false;
 		std::ostringstream oss;
@@ -320,6 +327,9 @@ SigGenResult SigGenerator::GenerateForFunction(const std::string& name, uintptr_
 	result.entry.type = OffsetType::Function;
 	result.entry.offsetAdjust = 0;
 	result.entry.derefInsnLen = 0;
+
+	if (matches > 1)
+		result.lowConfidence = true;
 
 	// Record previous address in preferred-base terms
 	uintptr_t preferredAddr = address - m_actualBase + m_preferredBase;
@@ -345,7 +355,17 @@ SigGenResult SigGenerator::GenerateForGlobal(const std::string& name, uintptr_t 
 		return result;
 	}
 
-	// Try each reference until we find one that produces a unique signature
+	// Try each reference until we find one that produces a unique signature.
+	// First pass: look for unique (1 match). Second pass: accept low-confidence.
+	struct BestCandidate
+	{
+		PatternData pattern;
+		int offsetAdjust = 0;
+		int derefInsnLen = 0;
+		int matchCount = 0;
+	};
+	BestCandidate bestLowConf;
+
 	for (const auto& ref : refs)
 	{
 		int offsetAdjust = 0;
@@ -372,6 +392,35 @@ SigGenResult SigGenerator::GenerateForGlobal(const std::string& name, uintptr_t 
 
 			return result;
 		}
+
+		// Track best low-confidence candidate (fewest matches)
+		if (matches > 1 && matches <= m_maxAcceptableMatches &&
+			(bestLowConf.matchCount == 0 || matches < bestLowConf.matchCount))
+		{
+			bestLowConf.pattern = pattern;
+			bestLowConf.offsetAdjust = offsetAdjust;
+			bestLowConf.derefInsnLen = derefInsnLen;
+			bestLowConf.matchCount = matches;
+		}
+	}
+
+	// Accept best low-confidence candidate if available
+	if (bestLowConf.matchCount > 0)
+	{
+		result.success = true;
+		result.lowConfidence = true;
+		result.entry.name = name;
+		result.entry.pattern = PatternToString(bestLowConf.pattern);
+		result.entry.type = OffsetType::GlobalRef;
+		result.entry.offsetAdjust = bestLowConf.offsetAdjust;
+		result.entry.derefInsnLen = bestLowConf.derefInsnLen;
+
+		uintptr_t preferredAddr = address - m_actualBase + m_preferredBase;
+		std::ostringstream addrStr;
+		addrStr << "0x" << std::uppercase << std::hex << preferredAddr;
+		result.entry.previousAddress = addrStr.str();
+
+		return result;
 	}
 
 	result.success = false;
@@ -381,48 +430,62 @@ SigGenResult SigGenerator::GenerateForGlobal(const std::string& name, uintptr_t 
 
 SigGenResult SigGenerator::Generate(const std::string& name, uintptr_t address)
 {
-	// Heuristic: names starting with "pinst", "inst", "__g", "DI8__", or containing
-	// no "__" (double underscore separating class from method) are globals.
-	// Names with ClassName__MethodName pattern are functions.
+	bool inText = (address >= m_textBase && address < m_textBase + m_textSize);
 
-	bool isGlobal = false;
+	// Determine if this looks like a global variable based on naming conventions.
+	// Global variables: pinst*, inst*, DI8__*, __*Name (where name suggests data),
+	// and anything with "_Table" in the name.
+	// Functions: ClassName__MethodName pattern (capital letter + letters + __ + method)
+	bool looksLikeGlobal = false;
 
 	if (name.substr(0, 5) == "pinst" ||
 		name.substr(0, 4) == "inst" ||
-		name.substr(0, 3) == "DI8" ||
-		name.substr(0, 3) == "__g" ||
-		name.substr(0, 3) == "__H" ||
-		name.substr(0, 3) == "__M" ||
-		name.substr(0, 3) == "__S" ||
-		name.substr(0, 3) == "__L" ||
-		name.substr(0, 3) == "__C" ||
-		name.substr(0, 3) == "__B" ||
-		name.substr(0, 3) == "__E" ||
-		name.find("_Table") != std::string::npos)
+		name.substr(0, 3) == "DI8")
 	{
-		// Check if the address is within the .text section
-		// If it's outside .text, it's definitely a global (data section)
-		if (address < m_textBase || address >= m_textBase + m_textSize)
-		{
-			isGlobal = true;
-		}
-		else
-		{
-			// Even if named like a global, if it's in .text, treat as function
-			// (some offsets like __do_loot are functions despite the naming)
-			isGlobal = false;
-		}
+		looksLikeGlobal = true;
 	}
-	else if (address < m_textBase || address >= m_textBase + m_textSize)
+	else if (name.size() >= 3 && name[0] == '_' && name[1] == '_')
 	{
-		// Address outside .text = definitely a global
-		isGlobal = true;
+		// Names starting with __ are globals unless they're in .text
+		// (functions like __do_loot live in .text)
+		looksLikeGlobal = !inText;
+	}
+	else if (name.find("_Table") != std::string::npos)
+	{
+		looksLikeGlobal = true;
+	}
+	else if (!inText)
+	{
+		// Address outside .text = definitely a data global
+		looksLikeGlobal = true;
 	}
 
-	if (isGlobal)
-		return GenerateForGlobal(name, address);
+	// Try primary strategy, then fallback
+	if (looksLikeGlobal)
+	{
+		auto result = GenerateForGlobal(name, address);
+		if (result.success)
+			return result;
+
+		// Fallback: maybe it's actually a function in a non-.text code section
+		if (inText)
+			return GenerateForFunction(name, address);
+
+		return result;
+	}
 	else
-		return GenerateForFunction(name, address);
+	{
+		auto result = GenerateForFunction(name, address);
+		if (result.success)
+			return result;
+
+		// Fallback: try as global (maybe it's a data address with code refs)
+		auto globalResult = GenerateForGlobal(name, address);
+		if (globalResult.success)
+			return globalResult;
+
+		return result; // return original error
+	}
 }
 
 } // namespace sigscan

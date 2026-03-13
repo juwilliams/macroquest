@@ -47,6 +47,7 @@ struct SigGenResult
 {
 	std::string name;
 	bool success = false;
+	bool lowConfidence = false; // true if multiple matches (scanner will disambiguate)
 	std::string errorMessage;
 	SignatureEntry entry;
 };
@@ -102,6 +103,7 @@ private:
 	size_t m_textSize = 0;
 	uintptr_t m_preferredBase = 0;
 	uintptr_t m_actualBase = 0;
+	int m_maxAcceptableMatches = 3; // accept up to this many matches (scanner disambiguates)
 };
 
 } // namespace sigscan

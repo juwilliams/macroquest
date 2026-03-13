@@ -58,12 +58,26 @@ public:
 	// Scan all signatures
 	std::vector<ScanResult> ScanAll(const std::vector<SignatureEntry>& entries) const;
 
+	// Scan all signatures with delta-guided fallback for NOT_FOUND entries.
+	// First does a normal scan, computes the median delta, then retries
+	// NOT_FOUND globals/functions using the predicted address.
+	std::vector<ScanResult> ScanAllWithFallback(const std::vector<SignatureEntry>& entries) const;
+
 private:
 	// Find all matches of a pattern in the text section
 	std::vector<uintptr_t> FindAllMatches(const PatternData& pattern) const;
 
 	// Resolve a global reference from a pattern match
 	uintptr_t ResolveGlobalRef(uintptr_t matchAddr, int offsetAdjust, int derefInsnLen) const;
+
+	// Delta-guided fallback: scan for RIP-relative references to a predicted global address
+	ScanResult ScanGlobalByDelta(const SignatureEntry& entry, int64_t medianDelta) const;
+
+	// Delta-guided fallback: check if predicted function address looks valid
+	ScanResult ScanFunctionByDelta(const SignatureEntry& entry, int64_t medianDelta) const;
+
+	// Find all RIP-relative references to a target address within a tolerance
+	std::vector<uintptr_t> FindRIPReferencesTo(uintptr_t targetAddr, int64_t tolerance = 0x100) const;
 
 	uintptr_t m_textBase = 0;
 	size_t m_textSize = 0;
